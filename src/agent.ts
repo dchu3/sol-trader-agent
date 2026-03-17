@@ -38,6 +38,15 @@ export function createToolRouter(
     localMcpClient?.tools.map((t) => t.name) ?? [],
   );
 
+  const remoteToolNames = new Set(remoteMcpClient.tools.map((t) => t.name));
+  const collisions = [...localToolNames].filter((n) => remoteToolNames.has(n));
+  if (collisions.length > 0) {
+    throw new Error(
+      `Tool name collision between remote and local MCP servers: ${collisions.join(", ")}. ` +
+        "Each tool name must be unique across all connected MCP servers.",
+    );
+  }
+
   const allTools: Tool[] = [
     ...remoteMcpClient.tools,
     ...(localMcpClient?.tools ?? []),
