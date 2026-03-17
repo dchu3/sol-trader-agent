@@ -1,0 +1,37 @@
+{
+  "name": "solana-pay-agent",
+  "version": "1.0.0",
+  "description": "A demo of AI agent-to-agent payments via the x402 protocol",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "keywords": [
+    "solana",
+    "usdc",
+    "mcp",
+    "gemini",
+    "agent",
+    "cli"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.18.0"
+  },
+  "dependencies": {
+    "@google/genai": "^1.44.0",
+    "@modelcontextprotocol/sdk": "^1.6.1",
+    "@solana/kit": "^5.5.1",
+    "@x402/core": "^2.6.0",
+    "@x402/svm": "^2.6.0",
+    "bs58": "^6.0.0",
+    "dotenv": "^16.4.7",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "^5.7.3"
+  }
+}
