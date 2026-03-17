@@ -4,8 +4,69 @@ import {
   type FunctionDeclaration,
   type Part,
 } from "@google/genai";
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { McpClient } from "./mcp-client.js";
+import type { LocalMcpClient } from "./local-mcp-client.js";
 import { debug } from "./logger.js";
+
+/**
+ * A unified interface the agent uses to call any tool regardless of which
+ * MCP client owns it.
+ */
+export interface ToolRouter {
+  /** All tools from every connected MCP client. */
+  tools: Tool[];
+  /** Call a tool by name, routing to the correct client. */
+  callTool(
+    name: string,
+    args: Record<string, unknown>,
+    options?: { allowPayment?: boolean },
+  ): Promise<string>;
+  /** Get payment info from the last remote MCP 402 probe (if any). */
+  getLastPaymentInfo(): { amount: string; asset: string } | null;
+}
+
+/**
+ * Build a ToolRouter that merges tools from a remote MCP client and an
+ * optional local MCP client, routing calls to the correct backend.
+ */
+export function createToolRouter(
+  remoteMcpClient: McpClient,
+  localMcpClient?: LocalMcpClient,
+): ToolRouter {
+  const localToolNames = new Set(
+    localMcpClient?.tools.map((t) => t.name) ?? [],
+  );
+
+  const remoteToolNames = new Set(remoteMcpClient.tools.map((t) => t.name));
+  const collisions = [...localToolNames].filter((n) => remoteToolNames.has(n));
+  if (collisions.length > 0) {
+    throw new Error(
+      `Tool name collision between remote and local MCP servers: ${collisions.join(", ")}. ` +
+        "Each tool name must be unique across all connected MCP servers.",
+    );
+  }
+
+  const allTools: Tool[] = [
+    ...remoteMcpClient.tools,
+    ...(localMcpClient?.tools ?? []),
+  ];
+
+  return {
+    tools: allTools,
+
+    async callTool(name, args, options) {
+      if (localToolNames.has(name) && localMcpClient) {
+        return localMcpClient.callTool(name, args);
+      }
+      return remoteMcpClient.callTool(name, args, options);
+    },
+
+    getLastPaymentInfo() {
+      return remoteMcpClient.getLastPaymentInfo();
+    },
+  };
+}
 
 const SYSTEM_INSTRUCTION = (walletAddress: string, toolNames: string[]) => {
   const toolSet = new Set(toolNames);
@@ -19,6 +80,18 @@ const SYSTEM_INSTRUCTION = (walletAddress: string, toolNames: string[]) => {
     capabilities.push(
       "- Analyze tokens using the analyze_token tool (payment is handled automatically by the x402 protocol — do NOT send USDC manually)",
     );
+  if (toolSet.has("get_quote"))
+    capabilities.push(
+      "- Preview swap quotes via Jupiter aggregator (get_quote) — shows price, output amount, route, and price impact without executing",
+    );
+  if (toolSet.has("buy_token"))
+    capabilities.push("- Buy Solana tokens by spending SOL via Jupiter (buy_token)");
+  if (toolSet.has("sell_token"))
+    capabilities.push("- Sell Solana tokens for SOL via Jupiter (sell_token)");
+  if (toolSet.has("buy_and_sell"))
+    capabilities.push("- Atomically buy and immediately sell a token (buy_and_sell)");
+  if (toolSet.has("get_balance"))
+    capabilities.push("- Check wallet SOL balance and token balances (get_balance)");
 
   // Fallback for unknown tools
   const knownTools = new Set([
@@ -29,20 +102,25 @@ const SYSTEM_INSTRUCTION = (walletAddress: string, toolNames: string[]) => {
     "get_wallet_info",
     "get_wallet_balance",
     "analyze_token",
+    "get_quote",
+    "buy_token",
+    "sell_token",
+    "buy_and_sell",
+    "get_balance",
   ]);
   const unknownTools = toolNames.filter((t) => !knownTools.has(t));
   if (unknownTools.length > 0) {
     capabilities.push(`- Use these tools: ${unknownTools.join(", ")}`);
   }
 
-  return `You are a helpful Solana assistant. The user's wallet address is: ${walletAddress}
+  return `You are a helpful Solana trading assistant. The user's wallet address is: ${walletAddress}
 
 You have access to tools that let you:
 ${capabilities.join("\n")}
 
 When the user refers to "my wallet", "my balance", or similar, use their wallet address shown above. When the user asks you to perform an action, use the appropriate tool. Always confirm amounts and addresses before executing transactions. Report results clearly.
 
-IMPORTANT: Only use tools that are explicitly available to you. Do NOT attempt to call tools that are not in your function declarations. If analyze_token requires payment, it is handled automatically — never send USDC manually to pay for tool access.`;
+IMPORTANT: Only use tools that are explicitly available to you. Do NOT attempt to call tools that are not in your function declarations. If analyze_token requires payment, it is handled automatically — never send USDC manually to pay for tool access. When the user wants to trade (buy/sell tokens), use the Jupiter-powered trading tools. Always suggest previewing a trade with get_quote before executing buy_token or sell_token.`;
 };
 
 /**
@@ -56,6 +134,8 @@ const READ_ONLY_TOOLS = new Set([
   "get_sol_balance",
   "get_usdc_balance",
   "get_incoming_usdc_payments",
+  "get_quote",
+  "get_balance",
 ]);
 
 /**
@@ -86,6 +166,21 @@ function formatToolAction(
       const amount = args.amount ?? "?";
       const recipient = args.recipient ?? args.to ?? "unknown";
       return `Send ${amount} USDC to ${recipient}`;
+    }
+    case "buy_token": {
+      const sol = args.sol_amount ?? "?";
+      const token = args.token_address ?? "unknown";
+      return `Buy token ${token} with ${sol} SOL`;
+    }
+    case "sell_token": {
+      const amount = args.token_amount ?? "?";
+      const token = args.token_address ?? "unknown";
+      return `Sell ${amount} of token ${token} for SOL`;
+    }
+    case "buy_and_sell": {
+      const sol = args.sol_amount ?? "?";
+      const token = args.token_address ?? "unknown";
+      return `Buy and sell token ${token} with ${sol} SOL (round-trip)`;
     }
     default: {
       const entries = Object.entries(args);
@@ -155,9 +250,9 @@ function convertSchema(
 }
 
 function mcpToolsToGeminiDeclarations(
-  mcpClient: McpClient,
+  router: ToolRouter,
 ): FunctionDeclaration[] {
-  return mcpClient.tools.map((tool) => {
+  return router.tools.map((tool) => {
     const decl: FunctionDeclaration = {
       name: tool.name,
       description: tool.description ?? "",
@@ -187,7 +282,7 @@ const rejectByDefault: ConfirmFn = async () => false;
 export async function runAgent(
   apiKey: string,
   model: string,
-  mcpClient: McpClient,
+  router: ToolRouter,
   userMessage: string,
   history: Content[],
   walletAddress: string,
@@ -195,8 +290,8 @@ export async function runAgent(
 ): Promise<string> {
   const ai = new GoogleGenAI({ apiKey });
 
-  const functionDeclarations = mcpToolsToGeminiDeclarations(mcpClient);
-  const toolNames = mcpClient.tools.map((t) => t.name);
+  const functionDeclarations = mcpToolsToGeminiDeclarations(router);
+  const toolNames = router.tools.map((t) => t.name);
 
   history.push({ role: "user", parts: [{ text: userMessage }] });
 
@@ -256,7 +351,7 @@ export async function runAgent(
       try {
         if (READ_ONLY_TOOLS.has(toolName)) {
           // ── Read-only: call directly, no confirmation, no payment ──
-          const resultText = await mcpClient.callTool(toolName, toolArgs, {
+          const resultText = await router.callTool(toolName, toolArgs, {
             allowPayment: false,
           });
           output = { result: resultText };
@@ -264,7 +359,7 @@ export async function runAgent(
         } else if (PROBE_SAFE_TOOLS.has(toolName)) {
           // ── Non-destructive paid tool: probe for cost, confirm with cost ──
           try {
-            const resultText = await mcpClient.callTool(toolName, toolArgs, {
+            const resultText = await router.callTool(toolName, toolArgs, {
               allowPayment: false,
             });
             // Succeeded without payment
@@ -282,7 +377,7 @@ export async function runAgent(
 
             // Build confirmation message with cost
             let message = formatToolAction(toolName, toolArgs);
-            const paymentInfo = mcpClient.getLastPaymentInfo();
+            const paymentInfo = router.getLastPaymentInfo();
             if (paymentInfo) {
               message += ` (cost: ${formatCost(paymentInfo.amount, paymentInfo.asset)})`;
             } else {
@@ -302,7 +397,7 @@ export async function runAgent(
               continue;
             }
 
-            const resultText = await mcpClient.callTool(toolName, toolArgs, {
+            const resultText = await router.callTool(toolName, toolArgs, {
               allowPayment: true,
             });
             output = { result: resultText };
@@ -325,7 +420,7 @@ export async function runAgent(
           }
 
           try {
-            const resultText = await mcpClient.callTool(toolName, toolArgs, {
+            const resultText = await router.callTool(toolName, toolArgs, {
               allowPayment: false,
             });
             output = { result: resultText };
@@ -344,7 +439,7 @@ export async function runAgent(
             // show a single combined prompt with cost instead of a bare
             // "requires payment" follow-up.
             let payMessage = formatToolAction(toolName, toolArgs);
-            const paymentInfo = mcpClient.getLastPaymentInfo();
+            const paymentInfo = router.getLastPaymentInfo();
             if (paymentInfo) {
               payMessage += ` — this will cost ${formatCost(paymentInfo.amount, paymentInfo.asset)}. Approve payment?`;
             } else {
@@ -364,7 +459,7 @@ export async function runAgent(
               continue;
             }
 
-            const resultText = await mcpClient.callTool(toolName, toolArgs, {
+            const resultText = await router.callTool(toolName, toolArgs, {
               allowPayment: true,
             });
             output = { result: resultText };

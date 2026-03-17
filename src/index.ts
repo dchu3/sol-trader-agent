@@ -2,29 +2,32 @@ import * as readline from "node:readline/promises";
 import { loadConfig } from "./config.js";
 import { createRemoteMcpClient } from "./mcp-client.js";
 import type { McpClient } from "./mcp-client.js";
+import { createLocalMcpClient } from "./local-mcp-client.js";
+import type { LocalMcpClient } from "./local-mcp-client.js";
 import { type Content } from "@google/genai";
-import { runAgent } from "./agent.js";
+import { runAgent, createToolRouter } from "./agent.js";
 import { setVerbose } from "./logger.js";
 
 function printHelp(): void {
   console.log(`
-Solana Pay Agent — an agent-to-agent x402 payment demo.
+Sol Trader Agent — analyse tokens and trade on Solana DEXs.
 
-This CLI connects to a remote MCP server to analyse tokens on the Solana
-blockchain. Token analysis is paid for automatically via the x402 protocol
-using your Solana wallet.
+This CLI connects to a remote MCP server (token analysis, x402-paid) and an
+optional local dex-trader-mcp server (Jupiter DEX trading). Use natural
+language to analyse tokens and buy/sell them.
 
 Example prompts:
   Analyse the token <mint-address>
-  What tokens can you analyse?
-  Tell me about <token-name>
+  Buy 0.1 SOL worth of <token-address>
+  Get a quote for swapping 1 SOL to <token-address>
+  What's my balance?
 
 Commands:
   /help   Show this help message
   /quit   Exit the application
 
-Payments are made automatically via x402 — you'll be asked to confirm
-before any funds are spent.
+Token analysis is paid via x402 — you'll be asked to confirm before any
+funds are spent. Trading actions (buy/sell) also require confirmation.
 `);
 }
 
@@ -34,15 +37,41 @@ async function main(): Promise<void> {
   const config = loadConfig();
   setVerbose(verbose || config.verbose);
 
-  console.log("Connecting to MCP server...");
+  console.log("Connecting to remote MCP server...");
   const mcpClient: McpClient = await createRemoteMcpClient(
     config.remoteMcpUrl,
     config.solanaPrivateKey,
     config.solanaRpcUrl,
   );
 
-  const toolNames = mcpClient.tools.map((t) => t.name).join(", ");
-  console.log(`Connected. Available tools: ${toolNames}`);
+  const remoteToolNames = mcpClient.tools.map((t) => t.name).join(", ");
+  console.log(`Remote MCP connected. Tools: ${remoteToolNames}`);
+
+  let localClient: LocalMcpClient | undefined;
+  if (config.dexTraderMcpPath) {
+    console.log("Connecting to local dex-trader-mcp server...");
+    const localEnv: Record<string, string> = {};
+    if (config.solanaPrivateKey) localEnv.SOLANA_PRIVATE_KEY = config.solanaPrivateKey;
+    if (config.solanaRpcUrl) localEnv.SOLANA_RPC_URL = config.solanaRpcUrl;
+    if (config.jupiterApiBase) localEnv.JUPITER_API_BASE = config.jupiterApiBase;
+    if (config.jupiterApiKey) localEnv.JUPITER_API_KEY = config.jupiterApiKey;
+
+    try {
+      localClient = await createLocalMcpClient(config.dexTraderMcpPath, localEnv);
+      const localToolNames = localClient.tools.map((t) => t.name).join(", ");
+      console.log(`Local dex-trader-mcp connected. Tools: ${localToolNames}`);
+    } catch (err) {
+      console.error(
+        "Warning: failed to connect to dex-trader-mcp:",
+        err instanceof Error ? err.message : String(err),
+      );
+      console.error("Trading tools will not be available.");
+    }
+  }
+
+  const router = createToolRouter(mcpClient, localClient);
+  const allToolNames = router.tools.map((t) => t.name).join(", ");
+  console.log(`All available tools: ${allToolNames}`);
   console.log(`Using model: ${config.geminiModel}`);
   if (verbose || config.verbose) {
     console.log("Verbose logging enabled (debug output on stderr)");
@@ -62,6 +91,9 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     rl.close();
+    if (localClient) {
+      await localClient.close().catch(() => {});
+    }
     await mcpClient.close();
   };
 
@@ -115,7 +147,7 @@ async function main(): Promise<void> {
         const answer = await runAgent(
           config.geminiApiKey,
           config.geminiModel,
-          mcpClient,
+          router,
           trimmed,
           conversationHistory,
           config.walletAddress,

@@ -11,17 +11,23 @@ No test suite or linter is configured.
 
 ## Architecture
 
-This is a CLI agent that bridges a user (readline), Google Gemini (LLM), and a remote MCP server (StreamableHTTP with x402 payments):
+This is a CLI agent that bridges a user (readline), Google Gemini (LLM), a remote MCP server (StreamableHTTP with x402 payments), and an optional local MCP server (stdio subprocess for DEX trading):
 
 ```
 User (readline) → index.ts → agent.ts → Gemini API
                                  ↕
-                           mcp-client.ts → Remote MCP server (HTTP + x402)
+                     ┌───────────┴───────────┐
+                     │                       │
+              mcp-client.ts            local-mcp-client.ts
+              (remote HTTP+x402)       (stdio subprocess)
+              svm402.com/mcp           dex-trader-mcp
+              [analyze_token, ...]     [buy_token, sell_token, ...]
 ```
 
 - **`index.ts`** — Readline loop, shutdown handling, confirmation prompts. Maintains a `conversationHistory: Content[]` across turns for multi-turn conversation.
-- **`agent.ts`** — Gemini agentic tool-calling loop (max 10 rounds per user message). Converts MCP JSON-Schema to Gemini's FunctionDeclaration format. Manages the read-only allowlist for tool confirmation.
+- **`agent.ts`** — Gemini agentic tool-calling loop (max 10 rounds per user message). Converts MCP JSON-Schema to Gemini's FunctionDeclaration format. Manages the read-only allowlist for tool confirmation. Exports `ToolRouter` and `createToolRouter` to merge tools from multiple MCP clients.
 - **`mcp-client.ts`** — Connects to a remote MCP server over StreamableHTTP. Tool calls that return 402 are retried with an x402 payment via `x402-fetch.ts`.
+- **`local-mcp-client.ts`** — Spawns a local MCP server (e.g. dex-trader-mcp) as a child process and connects via `StdioClientTransport`. Implements the same tool-calling interface without x402 payment logic.
 - **`config.ts`** — Loads `.env` via dotenv, validates with Zod.
 
 ## Key Conventions
@@ -30,7 +36,7 @@ User (readline) → index.ts → agent.ts → Gemini API
 - **Double quotes** everywhere.
 - **Type-only imports** — Use `import type { ... }` when importing only types.
 - **Error coercion pattern** — `err instanceof Error ? err.message : String(err)` is used consistently.
-- **Env var security** — `SOLANA_PRIVATE_KEY` is used client-side for x402 payment signing; `GEMINI_API_KEY` is never sent to the MCP server.
+- **Env var security** — `SOLANA_PRIVATE_KEY` is used client-side for x402 payment signing and forwarded to the local dex-trader-mcp subprocess; `GEMINI_API_KEY` is never sent to any MCP server.
 - **Safe-by-default confirmation** — A `READ_ONLY_TOOLS` allowlist in `agent.ts` determines which tools skip confirmation. Any tool NOT in this set requires user approval, so newly added MCP tools are safe by default.
 - **Conventional commits** — Use `feat:`, `fix:`, `docs:` prefixes. Always create feature/fix branches; never push directly to `main`.
 
@@ -45,3 +51,12 @@ Defined in `.env` (see `.env.example`). Validated by Zod in `config.ts`:
 - `GEMINI_API_KEY` — Google Gemini API key
 - `REMOTE_MCP_URL` — URL of the remote MCP server (StreamableHTTP)
 - `SOLANA_PRIVATE_KEY` — Base58-encoded Solana wallet private key
+
+## Optional Environment Variables
+
+- `DEX_TRADER_MCP_PATH` — Path to `dex-trader-mcp/dist/index.js` (enables local trading tools)
+- `JUPITER_API_BASE` — Jupiter API base URL (forwarded to dex-trader-mcp subprocess)
+- `JUPITER_API_KEY` — Jupiter API key (forwarded to dex-trader-mcp subprocess)
+- `SOLANA_RPC_URL` — Custom Solana RPC endpoint
+- `GEMINI_MODEL` — Gemini model override
+- `VERBOSE` — Enable debug logging

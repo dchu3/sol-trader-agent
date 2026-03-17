@@ -72,7 +72,7 @@ export async function createRemoteMcpClient(
   // go through plain fetch and never trigger x402 payments.
   const transport = new StreamableHTTPClientTransport(new URL(url), { fetch: costProbeFetch });
 
-  const client = new Client({ name: "solana-pay-agent", version: packageJson.version });
+  const client = new Client({ name: "sol-trader-agent", version: packageJson.version });
 
   try {
     await client.connect(transport);
@@ -91,7 +91,7 @@ export async function createRemoteMcpClient(
             { fetch: paidFetch },
           );
           const nextClient = new Client({
-            name: "solana-pay-agent",
+            name: "sol-trader-agent",
             version: packageJson.version,
           });
           await nextClient.connect(paidTransport);
