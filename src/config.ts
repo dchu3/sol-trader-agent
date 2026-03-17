@@ -13,6 +13,12 @@ export interface Config {
   solanaPrivateKey: string;
   /** Custom Solana RPC URL. Used by the x402 SDK to avoid public mainnet rate limits. */
   solanaRpcUrl?: string;
+  /** Path to the dex-trader-mcp dist/index.js entry point (enables local trading tools). */
+  dexTraderMcpPath?: string;
+  /** Jupiter API base URL forwarded to dex-trader-mcp subprocess. */
+  jupiterApiBase?: string;
+  /** Jupiter API key forwarded to dex-trader-mcp subprocess. */
+  jupiterApiKey?: string;
   verbose: boolean;
 }
 
@@ -43,6 +49,9 @@ const EnvSchema = z.object({
     .min(1, "SOLANA_PRIVATE_KEY environment variable is required"),
   GEMINI_MODEL: z.string().optional(),
   SOLANA_RPC_URL: z.string().optional(),
+  DEX_TRADER_MCP_PATH: z.string().optional(),
+  JUPITER_API_BASE: z.string().optional(),
+  JUPITER_API_KEY: z.string().optional(),
   NODE_ENV: z.string().optional(),
   VERBOSE: z.string().optional(),
 });
@@ -67,6 +76,9 @@ export function loadConfig(): Config {
     walletAddress,
     solanaPrivateKey: env.SOLANA_PRIVATE_KEY,
     solanaRpcUrl: env.SOLANA_RPC_URL,
+    dexTraderMcpPath: env.DEX_TRADER_MCP_PATH,
+    jupiterApiBase: env.JUPITER_API_BASE,
+    jupiterApiKey: env.JUPITER_API_KEY,
     verbose: env.VERBOSE === "true" || env.VERBOSE === "1",
   };
 }

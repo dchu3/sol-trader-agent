@@ -1,7 +1,7 @@
 {
-  "name": "solana-pay-agent",
+  "name": "sol-trader-agent",
   "version": "1.0.0",
-  "description": "A demo of AI agent-to-agent payments via the x402 protocol",
+  "description": "A CLI agent that analyses Solana tokens and trades on DEXs via MCP servers",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -14,7 +14,10 @@
     "mcp",
     "gemini",
     "agent",
-    "cli"
+    "cli",
+    "jupiter",
+    "dex",
+    "trading"
   ],
   "license": "MIT",
   "engines": {
