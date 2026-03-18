@@ -46,10 +46,7 @@ export async function startTelegramBot(
   bot.use(async (ctx, next) => {
     const chatId = ctx.chat?.id;
     if (config.telegramChatId && chatId !== config.telegramChatId) {
-      debug(
-        `Telegram: rejected chat ${chatId} (type: ${typeof chatId}) — ` +
-          `expected ${config.telegramChatId} (type: ${typeof config.telegramChatId})`,
-      );
+      debug(`Telegram: rejected message from unauthorised chat ${chatId}`);
       await ctx.reply("⛔ You are not authorised to use this bot.");
       return;
     }
