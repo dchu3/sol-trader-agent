@@ -50,9 +50,32 @@ Edit `.env` with your values:
 - `DEX_TRADER_MCP_PATH` (optional): Path to `dex-trader-mcp/dist/index.js` (enables trading tools)
 - `JUPITER_API_BASE` (optional): Jupiter API base URL (forwarded to dex-trader-mcp)
 - `JUPITER_API_KEY` (optional): Jupiter API key (forwarded to dex-trader-mcp)
+- `TELEGRAM_BOT_TOKEN` (optional): Telegram bot token from [@BotFather](https://t.me/BotFather). Enables the Telegram interface when set.
+- `TELEGRAM_CHAT_ID` (optional): Telegram chat ID of the authorised user. When set, the bot only responds to this chat. To find your chat ID, message [@userinfobot](https://t.me/userinfobot) on Telegram.
 - `VERBOSE` (optional): Set to `true` or `1` to enable debug logging
 
 ## Usage
+
+### CLI
+
+```bash
+npm start
+```
+
+### Telegram
+
+1. Create a bot via [@BotFather](https://t.me/BotFather) on Telegram and copy the token
+2. Find your chat ID by messaging [@userinfobot](https://t.me/userinfobot) on Telegram
+3. Add to your `.env`:
+   ```
+   TELEGRAM_BOT_TOKEN=your-bot-token
+   TELEGRAM_CHAT_ID=your-chat-id
+   ```
+4. Run `npm start` — both CLI and Telegram interfaces start simultaneously
+
+The Telegram bot provides the same functionality as the CLI: token analysis, trading, balance checks, etc. Destructive actions (buy/sell, paid analysis) require confirmation via inline keyboard buttons (✅ Approve / ❌ Decline). Confirmations time out after 120 seconds.
+
+Telegram commands: `/start` (welcome), `/help` (usage info), `/clear` (reset conversation history).
 
 ```bash
 npm start
@@ -88,29 +111,29 @@ The agent connects to the MCP servers, discovers available tools, and uses Gemin
 ## Architecture
 
 ```
-                       ┌─────────────┐        ┌──────────────────┐
-  User (CLI) ─────────▶│ Gemini Agent │──HTTP──▶│  Remote MCP Server│
-    readline  ◀─────────│  tool loop   │◀───────│  (x402-gated)    │
-                       └──────┬──────┘        └──────────────────┘
-                              │                       │
-                              │                402? ──┤
-                              │                       ▼
-                              │                Sign USDC payment
-                              │                (x402 SDK + Solana)
-                              │
-                         stdio │
-                              │
-                       ┌──────▼──────┐
-                       │ dex-trader  │
-                       │ MCP server  │──── Jupiter API
-                       │  (local)    │     (DEX trading)
-                       └─────────────┘
+                        ┌─────────────┐        ┌──────────────────┐
+  User (CLI) ─────────▶│             │──HTTP──▶│  Remote MCP Server│
+    readline  ◀─────────│ Gemini Agent │◀───────│  (x402-gated)    │
+                        │  tool loop   │        └──────────────────┘
+  User (Telegram) ────▶│             │               │
+    grammy bot  ◀───────│             │         402? ─┤
+                        └──────┬──────┘               ▼
+                               │              Sign USDC payment
+                               │              (x402 SDK + Solana)
+                          stdio │
+                               │
+                        ┌──────▼──────┐
+                        │ dex-trader  │
+                        │ MCP server  │──── Jupiter API
+                        │  (local)    │     (DEX trading)
+                        └─────────────┘
 ```
 
-- **`src/index.ts`** — Interactive readline CLI entrypoint
+- **`src/index.ts`** — Interactive readline CLI entrypoint; orchestrates both CLI and Telegram interfaces
 - **`src/agent.ts`** — Gemini agentic loop with function calling; merges tools from all MCP clients via `ToolRouter`
 - **`src/mcp-client.ts`** — Remote MCP client over StreamableHTTP with x402 payment support
 - **`src/local-mcp-client.ts`** — Local MCP client that spawns a subprocess and connects via stdio
+- **`src/telegram.ts`** — Telegram bot interface using grammy (long-polling, inline keyboard confirmations)
 - **`src/x402-fetch.ts`** — Fetch wrapper that handles x402 payment challenges transparently
 - **`src/config.ts`** — Environment variable loading and validation
 - **`src/logger.ts`** — Debug logging utility (verbose mode)

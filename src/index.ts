@@ -7,6 +7,7 @@ import type { LocalMcpClient } from "./local-mcp-client.js";
 import { type Content } from "@google/genai";
 import { runAgent, createToolRouter } from "./agent.js";
 import { setVerbose } from "./logger.js";
+import { startTelegramBot } from "./telegram.js";
 
 function printHelp(): void {
   console.log(`
@@ -81,6 +82,20 @@ async function main(): Promise<void> {
 
   const conversationHistory: Content[] = [];
 
+  // ── Start Telegram bot (optional) ──────────────────────────────────
+  let stopTelegramBot: (() => void) | undefined;
+  if (config.telegramBotToken) {
+    try {
+      stopTelegramBot = await startTelegramBot(config, router);
+    } catch (err) {
+      console.error(
+        "Warning: failed to start Telegram bot:",
+        err instanceof Error ? err.message : String(err),
+      );
+      console.error("Telegram interface will not be available.");
+    }
+  }
+
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
@@ -91,6 +106,9 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     rl.close();
+    if (stopTelegramBot) {
+      stopTelegramBot();
+    }
     if (localClient) {
       await localClient.close().catch(() => {});
     }
