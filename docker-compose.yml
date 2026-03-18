@@ -1,0 +1,11 @@
+services:
+  agent:
+    build: .
+    env_file: .env
+    stdin_open: true  # docker run -i
+    tty: true         # docker run -t
+    # Uncomment to mount a local dex-trader-mcp build into the container:
+    # volumes:
+    #   - /path/to/dex-trader-mcp/dist:/opt/dex-trader-mcp/dist:ro
+    # Then set in .env:
+    #   DEX_TRADER_MCP_PATH=/opt/dex-trader-mcp/dist/index.js

@@ -77,6 +77,29 @@ The Telegram bot provides the same functionality as the CLI: token analysis, tra
 
 Telegram commands: `/start` (welcome), `/help` (usage info), `/clear` (reset conversation history).
 
+### Docker
+
+Build and run with Docker Compose:
+
+```bash
+docker compose run --rm agent        # Interactive CLI + Telegram
+```
+
+To run Telegram-only in the background (no CLI):
+
+```bash
+docker compose up -d
+```
+
+Or without Compose:
+
+```bash
+docker build -t sol-trader-agent .
+docker run -it --env-file .env sol-trader-agent
+```
+
+To use dex-trader-mcp inside Docker, uncomment the volume mount in `docker-compose.yml` and set `DEX_TRADER_MCP_PATH` in your `.env`.
+
 ```bash
 npm start
 ```
