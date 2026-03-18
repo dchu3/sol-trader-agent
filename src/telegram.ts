@@ -209,6 +209,12 @@ export async function startTelegramBot(
     }
   }
 
+  // ── Register menu commands with Telegram ──────────────────────────────
+  await bot.api.setMyCommands([
+    { command: "help", description: "Show usage info" },
+    { command: "clear", description: "Reset conversation history" },
+  ]);
+
   // ── Start bot ────────────────────────────────────────────────────────
   // bot.start() runs long-polling in the background and returns immediately
   // after the first getUpdates call succeeds.
