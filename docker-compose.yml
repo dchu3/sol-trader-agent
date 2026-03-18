@@ -5,7 +5,7 @@ services:
     stdin_open: true  # docker run -i
     tty: true         # docker run -t
     volumes:
-      - /home/derekchudley/projects/dex-trader-mcp/dist:/opt/dex-trader-mcp/dist:ro
+      - /home/derekchudley/projects/dex-trader-mcp:/opt/dex-trader-mcp:ro
     environment:
       # Override host-path DEX_TRADER_MCP_PATH with the container-path equivalent
       - DEX_TRADER_MCP_PATH=/opt/dex-trader-mcp/dist/index.js
