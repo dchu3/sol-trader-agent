@@ -113,16 +113,17 @@ export async function startTelegramBot(
   });
 
   // ── Message handler ──────────────────────────────────────────────────
-  bot.on("message:text", async (ctx) => {
+  bot.on("message:text", (ctx) => {
     const chatId = ctx.chat.id;
     const text = ctx.message.text.trim();
     if (!text) return;
 
-    // Sequential processing per chat.
+    // Don't await — grammy processes updates sequentially, so blocking
+    // here would prevent callback_query updates (inline keyboard taps)
+    // from being delivered, deadlocking the confirmation flow.
     const previous = locks.get(chatId) ?? Promise.resolve();
     const current = previous.then(() => handleMessage(ctx, chatId, text));
     locks.set(chatId, current.catch(() => {}));
-    await current;
   });
 
   async function handleMessage(
