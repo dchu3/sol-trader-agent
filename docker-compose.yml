@@ -1,10 +1,10 @@
 services:
   agent:
     build: .
-    env_file: .env
     stdin_open: true  # docker run -i
     tty: true         # docker run -t
     volumes:
+      - ./.env:/app/.env:ro
       - /home/derekchudley/projects/dex-trader-mcp:/opt/dex-trader-mcp:ro
     environment:
       # Override host-path DEX_TRADER_MCP_PATH with the container-path equivalent
