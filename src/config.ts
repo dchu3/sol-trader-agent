@@ -19,6 +19,10 @@ export interface Config {
   jupiterApiBase?: string;
   /** Jupiter API key forwarded to dex-trader-mcp subprocess. */
   jupiterApiKey?: string;
+  /** Telegram bot token from @BotFather. Enables the Telegram interface when set. */
+  telegramBotToken?: string;
+  /** Telegram chat ID of the authorised private user. Only this chat can interact with the bot. */
+  telegramChatId?: number;
   verbose: boolean;
 }
 
@@ -52,6 +56,8 @@ const EnvSchema = z.object({
   DEX_TRADER_MCP_PATH: z.string().optional(),
   JUPITER_API_BASE: z.string().optional(),
   JUPITER_API_KEY: z.string().optional(),
+  TELEGRAM_BOT_TOKEN: z.string().optional(),
+  TELEGRAM_CHAT_ID: z.string().optional(),
   NODE_ENV: z.string().optional(),
   VERBOSE: z.string().optional(),
 });
@@ -79,6 +85,8 @@ export function loadConfig(): Config {
     dexTraderMcpPath: env.DEX_TRADER_MCP_PATH,
     jupiterApiBase: env.JUPITER_API_BASE,
     jupiterApiKey: env.JUPITER_API_KEY,
+    telegramBotToken: env.TELEGRAM_BOT_TOKEN,
+    telegramChatId: env.TELEGRAM_CHAT_ID ? Number(env.TELEGRAM_CHAT_ID) : undefined,
     verbose: env.VERBOSE === "true" || env.VERBOSE === "1",
   };
 }
