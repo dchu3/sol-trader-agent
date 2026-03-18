@@ -57,7 +57,13 @@ const EnvSchema = z.object({
   JUPITER_API_BASE: z.string().optional(),
   JUPITER_API_KEY: z.string().optional(),
   TELEGRAM_BOT_TOKEN: z.string().optional(),
-  TELEGRAM_CHAT_ID: z.string().optional(),
+  TELEGRAM_CHAT_ID: z
+    .string()
+    .optional()
+    .refine(
+      (v) => v === undefined || (v.length > 0 && Number.isFinite(Number(v))),
+      "TELEGRAM_CHAT_ID must be a valid numeric chat ID",
+    ),
   NODE_ENV: z.string().optional(),
   VERBOSE: z.string().optional(),
 });
