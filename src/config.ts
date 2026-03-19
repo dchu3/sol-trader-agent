@@ -92,7 +92,7 @@ export function loadConfig(): Config {
     jupiterApiBase: env.JUPITER_API_BASE,
     jupiterApiKey: env.JUPITER_API_KEY,
     telegramBotToken: env.TELEGRAM_BOT_TOKEN,
-    telegramChatId: env.TELEGRAM_CHAT_ID ? Number(env.TELEGRAM_CHAT_ID) : undefined,
+    telegramChatId: env.TELEGRAM_CHAT_ID !== undefined ? Number(env.TELEGRAM_CHAT_ID) : undefined,
     verbose: env.VERBOSE === "true" || env.VERBOSE === "1",
   };
 }
