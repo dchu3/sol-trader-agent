@@ -196,10 +196,14 @@ function formatToolAction(
 /** Format a payment amount for display (e.g. "0.10 USDC"). */
 function formatCost(amount: string, asset: string): string {
   if (KNOWN_USDC_MINTS.has(asset)) {
-    const value = Number(amount) / 10 ** USDC_DECIMALS;
-    // Always show at least 2 decimal places for currency display
-    const decimals = Math.max(2, (value.toString().split(".")[1] ?? "").length);
-    return `${value.toFixed(decimals)} USDC`;
+    // String-based decimal shift to avoid Number exponential notation for tiny values.
+    const raw = amount.replace(/^0+/, "") || "0";
+    const padded = raw.padStart(USDC_DECIMALS + 1, "0");
+    const whole = padded.slice(0, -USDC_DECIMALS);
+    const frac = padded.slice(-USDC_DECIMALS);
+    // Trim trailing zeros but keep at least 2 decimal places
+    const trimmed = frac.replace(/0+$/, "").padEnd(2, "0");
+    return `${whole}.${trimmed} USDC`;
   }
   return amount;
 }
