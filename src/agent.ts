@@ -196,6 +196,9 @@ function formatToolAction(
 /** Format a payment amount for display (e.g. "0.10 USDC"). */
 function formatCost(amount: string, asset: string): string {
   if (KNOWN_USDC_MINTS.has(asset)) {
+    if (!/^\d+$/.test(amount)) {
+      return `${amount} USDC`;
+    }
     // String-based decimal shift to avoid Number exponential notation for tiny values.
     const raw = amount.replace(/^0+/, "") || "0";
     const padded = raw.padStart(USDC_DECIMALS + 1, "0");
