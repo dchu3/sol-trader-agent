@@ -45,9 +45,16 @@ export async function startTelegramBot(
   // ── Auth middleware ──────────────────────────────────────────────────
   bot.use(async (ctx, next) => {
     const chatId = ctx.chat?.id;
-    if (config.telegramChatId && chatId !== config.telegramChatId) {
+    // Use !== undefined so that config.telegramChatId = 0 is never
+    // treated as "no restriction configured" (0 is falsy but is a value).
+    if (config.telegramChatId !== undefined && chatId !== config.telegramChatId) {
       debug(`Telegram: rejected message from unauthorised chat ${chatId}`);
-      await ctx.reply("⛔ You are not authorised to use this bot.");
+      // Only reply when there is a concrete chat to reply to; some update
+      // types (e.g. callback queries from inline-mode messages) have no
+      // associated chat and attempting ctx.reply() would throw.
+      if (chatId !== undefined) {
+        await ctx.reply("⛔ You are not authorised to use this bot.");
+      }
       return;
     }
     await next();
