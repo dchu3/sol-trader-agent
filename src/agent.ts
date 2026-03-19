@@ -193,11 +193,13 @@ function formatToolAction(
   }
 }
 
-/** Format a payment amount for display (e.g. "0.01 USDC"). */
+/** Format a payment amount for display (e.g. "0.10 USDC"). */
 function formatCost(amount: string, asset: string): string {
   if (KNOWN_USDC_MINTS.has(asset)) {
     const value = Number(amount) / 10 ** USDC_DECIMALS;
-    return `${value} USDC`;
+    // Always show at least 2 decimal places for currency display
+    const decimals = Math.max(2, (value.toString().split(".")[1] ?? "").length);
+    return `${value.toFixed(decimals)} USDC`;
   }
   return amount;
 }
