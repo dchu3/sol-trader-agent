@@ -21,7 +21,7 @@ export interface Config {
   jupiterApiKey?: string;
   /** Telegram bot token from @BotFather. Enables the Telegram interface when set. */
   telegramBotToken?: string;
-  /** Telegram chat ID of the authorised private user. Only this chat can interact with the bot. */
+  /** Telegram chat ID of the authorised chat. Only this chat can interact with the bot. */
   telegramChatId?: number;
   verbose: boolean;
 }
@@ -61,8 +61,15 @@ const EnvSchema = z.object({
     .string()
     .optional()
     .refine(
-      (v) => v === undefined || (Number.isInteger(Number(v)) && Number(v) !== 0),
-      "TELEGRAM_CHAT_ID must be a valid non-zero integer chat ID",
+      (v) => {
+        if (v === undefined) return true;
+        // Reject hex, scientific notation, and other non-decimal formats by
+        // requiring a strict decimal integer string (optional leading minus).
+        if (!/^-?\d+$/.test(v)) return false;
+        const n = Number(v);
+        return Number.isInteger(n) && n !== 0 && Number.isSafeInteger(n);
+      },
+      "TELEGRAM_CHAT_ID must be a valid non-zero decimal integer chat ID",
     ),
   NODE_ENV: z.string().optional(),
   VERBOSE: z.string().optional(),

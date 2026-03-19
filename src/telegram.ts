@@ -45,8 +45,8 @@ export async function startTelegramBot(
   // ── Auth middleware ──────────────────────────────────────────────────
   bot.use(async (ctx, next) => {
     const chatId = ctx.chat?.id;
-    // Use !== undefined so that config.telegramChatId = 0 is never
-    // treated as "no restriction configured" (0 is falsy but is a value).
+    // Use !== undefined rather than a truthy check as defense-in-depth:
+    // a falsy-but-set value would otherwise skip the restriction entirely.
     if (config.telegramChatId !== undefined && chatId !== config.telegramChatId) {
       debug(`Telegram: rejected message from unauthorised chat ${chatId}`);
       // Only reply when there is a concrete chat to reply to; some update
@@ -228,10 +228,10 @@ export async function startTelegramBot(
   bot.start({
     onStart: () => {
       console.log("Telegram bot started (long-polling).");
-      if (config.telegramChatId) {
+      if (config.telegramChatId !== undefined) {
         console.log(`Telegram bot restricted to chat ID: ${config.telegramChatId}`);
       } else {
-        console.log("⚠️  TELEGRAM_CHAT_ID not set — bot will accept messages from any user.");
+        console.log("⚠️  TELEGRAM_CHAT_ID not set — bot will accept messages from any chat.");
       }
     },
   });
