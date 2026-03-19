@@ -61,8 +61,8 @@ const EnvSchema = z.object({
     .string()
     .optional()
     .refine(
-      (v) => v === undefined || (v.length > 0 && Number.isFinite(Number(v))),
-      "TELEGRAM_CHAT_ID must be a valid numeric chat ID",
+      (v) => v === undefined || (Number.isInteger(Number(v)) && Number(v) !== 0),
+      "TELEGRAM_CHAT_ID must be a valid non-zero integer chat ID",
     ),
   NODE_ENV: z.string().optional(),
   VERBOSE: z.string().optional(),
