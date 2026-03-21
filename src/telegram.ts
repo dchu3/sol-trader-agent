@@ -280,22 +280,29 @@ export async function startTelegramBot(
     return tag.startsWith("</");
   }
 
+  interface OpenTag {
+    /** Lowercase tag name, e.g. "b", "a". */
+    name: string;
+    /** Full opening tag string, e.g. "<b>" or '<a href="https://...">'. */
+    openTag: string;
+  }
+
   /**
    * Compute the stack of unclosed tags in a chunk of sanitized HTML.
-   * Returns opening tags in order (e.g. ["b", "i"]).
+   * Returns full opening tag info so anchors can be reconstructed with href.
    */
-  function openTagStack(html: string): string[] {
-    const stack: string[] = [];
+  function openTagStack(html: string): OpenTag[] {
+    const stack: OpenTag[] = [];
     const tagRe = /<\/?[a-zA-Z][^>]*>/g;
     let m: RegExpExecArray | null;
     while ((m = tagRe.exec(html)) !== null) {
       const name = getTagName(m[0]);
       if (!name) continue;
       if (isClosingTag(m[0])) {
-        const idx = stack.lastIndexOf(name);
+        const idx = (() => { for (let i = stack.length - 1; i >= 0; i--) { if (stack[i].name === name) return i; } return -1; })();
         if (idx !== -1) stack.splice(idx, 1);
       } else if (SELF_CLOSING_RE.test(m[0]) || /^<a\s/i.test(m[0])) {
-        stack.push(name);
+        stack.push({ name, openTag: m[0] });
       }
     }
     return stack;
@@ -305,7 +312,8 @@ export async function startTelegramBot(
   function isHtmlParseError(err: unknown): boolean {
     if (!(err instanceof Error)) return false;
     const msg = err.message.toLowerCase();
-    return msg.includes("can't parse") || msg.includes("bad request") || msg.includes("entities");
+    if (!msg.includes("can't parse")) return false;
+    return msg.includes("entities") || msg.includes("message text");
   }
 
   /** Try to send with HTML; fall back to plain text only for parse errors. */
@@ -340,12 +348,14 @@ export async function startTelegramBot(
 
     let remaining = text;
     /** Tags left open from the previous chunk that need reopening. */
-    let carryOver: string[] = [];
+    let carryOver: OpenTag[] = [];
 
     while (remaining.length > 0) {
       // Prepend reopened tags from the previous chunk.
-      const prefix = carryOver.map((t) => `<${t}>`).join("");
-      const budget = MAX_MESSAGE_LENGTH - prefix.length;
+      const prefix = carryOver.map((t) => t.openTag).join("");
+      // Reserve space for worst-case closing tags in suffix.
+      const maxSuffix = carryOver.reduce((n, t) => n + t.name.length + 3, 0) + 50;
+      const budget = MAX_MESSAGE_LENGTH - prefix.length - maxSuffix;
 
       let chunk: string;
       if (remaining.length <= budget) {
@@ -359,12 +369,12 @@ export async function startTelegramBot(
 
       // Close any tags left open in this chunk.
       const open = openTagStack(prefix + chunk);
-      const suffix = open.reverse().map((t) => `</${t}>`).join("");
+      const suffix = [...open].reverse().map((t) => `</${t.name}>`).join("");
 
       await sendHtmlWithFallback(ctx, chatId, prefix + chunk + suffix);
 
       // The tags we just force-closed need reopening in the next chunk.
-      carryOver = [...open].reverse();
+      carryOver = open;
     }
   }
 
