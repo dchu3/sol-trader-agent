@@ -79,7 +79,7 @@ FORMATTING RULES (you MUST follow these for every response):
 - Keep bullet points short — one line each, no filler sentences.
 - Separate sections with a blank line for readability.
 - Never wrap the whole message in a code block.
-- Escape the characters <, >, and & as &lt;, &gt;, and &amp; when they appear in normal text (not inside an HTML tag).`;
+- Do NOT escape special characters like <, >, or & — they will be escaped automatically.`;
 
 const SYSTEM_INSTRUCTION = (walletAddress: string, toolNames: string[], channel: Channel = "cli") => {
   const toolSet = new Set(toolNames);

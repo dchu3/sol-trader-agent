@@ -248,8 +248,9 @@ export async function startTelegramBot(
   }
 
   /**
-   * Find a safe break point that doesn't split inside an HTML tag.
-   * After sanitisation the only raw `<`/`>` belong to whitelisted tags.
+   * Find a safe break point that doesn't split inside an HTML tag or entity.
+   * After sanitisation the only raw `<`/`>` belong to whitelisted tags,
+   * and `&` starts escaped entities like `&amp;`, `&lt;`, `&gt;`.
    */
   function safeSplit(text: string, maxLen: number): number {
     const nlPos = text.lastIndexOf("\n", maxLen);
@@ -260,6 +261,15 @@ export async function startTelegramBot(
     const lastClose = text.lastIndexOf(">", bp);
     if (lastOpen > lastClose && lastOpen > 0) {
       bp = lastOpen;
+    }
+
+    // If the break falls inside an HTML entity (`&...;`), move before the `&`.
+    const lastAmp = text.lastIndexOf("&", bp);
+    if (lastAmp >= 0 && lastAmp < bp) {
+      const semi = text.indexOf(";", lastAmp);
+      if (semi >= bp) {
+        bp = lastAmp;
+      }
     }
 
     return bp;
@@ -353,16 +363,16 @@ export async function startTelegramBot(
     while (remaining.length > 0) {
       // Prepend reopened tags from the previous chunk.
       const prefix = carryOver.map((t) => t.openTag).join("");
-      // Reserve space for worst-case closing tags in suffix.
-      const maxSuffix = carryOver.reduce((n, t) => n + t.name.length + 3, 0) + 50;
-      const budget = MAX_MESSAGE_LENGTH - prefix.length - maxSuffix;
 
       let chunk: string;
-      if (remaining.length <= budget) {
+      if (remaining.length + prefix.length <= MAX_MESSAGE_LENGTH) {
         chunk = remaining;
         remaining = "";
       } else {
-        const bp = safeSplit(remaining, budget);
+        // Compute budget: reserve space for prefix, then select chunk,
+        // then compute the actual suffix and trim if needed.
+        const roughBudget = MAX_MESSAGE_LENGTH - prefix.length - 200;
+        const bp = safeSplit(remaining, Math.max(roughBudget, 1));
         chunk = remaining.slice(0, bp);
         remaining = remaining.slice(bp).replace(/^\n/, "");
       }
@@ -371,10 +381,22 @@ export async function startTelegramBot(
       const open = openTagStack(prefix + chunk);
       const suffix = [...open].reverse().map((t) => `</${t.name}>`).join("");
 
-      await sendHtmlWithFallback(ctx, chatId, prefix + chunk + suffix);
+      // If prefix + chunk + suffix exceeds the limit, trim chunk to fit.
+      const maxChunkLen = MAX_MESSAGE_LENGTH - prefix.length - suffix.length;
+      if (chunk.length > maxChunkLen) {
+        const trimBp = safeSplit(chunk, maxChunkLen);
+        remaining = chunk.slice(trimBp).replace(/^\n/, "") + remaining;
+        chunk = chunk.slice(0, trimBp);
+      }
+
+      // Recompute suffix after potential trim.
+      const finalOpen = openTagStack(prefix + chunk);
+      const finalSuffix = [...finalOpen].reverse().map((t) => `</${t.name}>`).join("");
+
+      await sendHtmlWithFallback(ctx, chatId, prefix + chunk + finalSuffix);
 
       // The tags we just force-closed need reopening in the next chunk.
-      carryOver = open;
+      carryOver = finalOpen;
     }
   }
 
