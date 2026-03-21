@@ -1,5 +1,12 @@
 # Sol Trader Agent
 
+> [!WARNING]
+> **This is experimental software.** It is under active development and may contain bugs, incomplete features, or unexpected behaviour. Do not rely on it for production use.
+>
+> **Cryptocurrency trading involves substantial risk of financial loss.** Token prices are highly volatile and you can lose some or all of your funds. Nothing in this project constitutes financial advice.
+>
+> **Use at your own risk.** The authors and contributors accept no liability for any losses or damages arising from the use of this software. You are solely responsible for your own trading decisions and wallet security.
+
 A Gemini-powered CLI agent that **analyses Solana tokens** and **trades on DEXs** via MCP servers. Talk to it in plain English — it discovers tools on a remote [MCP](https://modelcontextprotocol.io) server ([svm402.com/mcp](https://svm402.com/mcp)) for token analysis (paid via [x402](https://x402.org)), and connects to a local [dex-trader-mcp](https://github.com/dchu3/dex-trader-mcp) server for Jupiter DEX trading.
 
 ## What This Shows
