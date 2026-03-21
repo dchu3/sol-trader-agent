@@ -68,7 +68,20 @@ export function createToolRouter(
   };
 }
 
-const SYSTEM_INSTRUCTION = (walletAddress: string, toolNames: string[]) => {
+/** Output channel so the system prompt can request channel-appropriate formatting. */
+export type Channel = "cli" | "telegram";
+
+const TELEGRAM_FORMAT_ADDENDUM = `
+
+FORMATTING RULES (you MUST follow these for every response):
+- Use Telegram HTML: <b>bold</b>, <i>italic</i>, <code>code</code>. Do NOT use Markdown (**bold**, *italic*, \`code\`).
+- Use emoji section headers for visual hierarchy (e.g. 📊 Summary, ⚠️ Risks, 💡 Verdict).
+- Keep bullet points short — one line each, no filler sentences.
+- Separate sections with a blank line for readability.
+- Never wrap the whole message in a code block.
+- Escape the characters <, >, and & as &lt;, &gt;, and &amp; when they appear in normal text (not inside an HTML tag). If unsure, just write them literally — they will be escaped automatically.`;
+
+const SYSTEM_INSTRUCTION = (walletAddress: string, toolNames: string[], channel: Channel = "cli") => {
   const toolSet = new Set(toolNames);
   const capabilities: string[] = [];
   if (toolSet.has("get_usdc_balance") || toolSet.has("get_sol_balance"))
@@ -120,7 +133,7 @@ ${capabilities.join("\n")}
 
 When the user refers to "my wallet", "my balance", or similar, use their wallet address shown above. When the user asks you to perform an action, use the appropriate tool. Always confirm amounts and addresses before executing transactions. Report results clearly.
 
-IMPORTANT: Only use tools that are explicitly available to you. Do NOT attempt to call tools that are not in your function declarations. If analyze_token requires payment, it is handled automatically — never send USDC manually to pay for tool access. When the user wants to trade (buy/sell tokens), use the Jupiter-powered trading tools. Always suggest previewing a trade with get_quote before executing buy_token or sell_token.`;
+IMPORTANT: Only use tools that are explicitly available to you. Do NOT attempt to call tools that are not in your function declarations. If analyze_token requires payment, it is handled automatically — never send USDC manually to pay for tool access. When the user wants to trade (buy/sell tokens), use the Jupiter-powered trading tools. Always suggest previewing a trade with get_quote before executing buy_token or sell_token.${channel === "telegram" ? TELEGRAM_FORMAT_ADDENDUM : ""}`;
 };
 
 /**
@@ -296,6 +309,7 @@ export async function runAgent(
   history: Content[],
   walletAddress: string,
   confirmFn: ConfirmFn = rejectByDefault,
+  channel: Channel = "cli",
 ): Promise<string> {
   const ai = new GoogleGenAI({ apiKey });
 
@@ -311,7 +325,7 @@ export async function runAgent(
       model,
       contents: history,
       config: {
-        systemInstruction: SYSTEM_INSTRUCTION(walletAddress, toolNames),
+        systemInstruction: SYSTEM_INSTRUCTION(walletAddress, toolNames, channel),
         tools: [{ functionDeclarations }],
       },
     });

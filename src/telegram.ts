@@ -1,7 +1,7 @@
 import { Bot, InlineKeyboard, type Context } from "grammy";
 import type { Content } from "@google/genai";
 import type { Config } from "./config.js";
-import type { ToolRouter, ConfirmFn } from "./agent.js";
+import type { ToolRouter, ConfirmFn, Channel } from "./agent.js";
 import { runAgent } from "./agent.js";
 import { debug } from "./logger.js";
 
@@ -178,6 +178,7 @@ export async function startTelegramBot(
         history,
         config.walletAddress,
         confirmFn,
+        "telegram",
       );
 
       await sendLongMessage(ctx, chatId, answer);
@@ -189,17 +190,97 @@ export async function startTelegramBot(
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────
+
+  /** Escape &, <, > in plain-text segments for Telegram HTML. */
+  function escapeHtmlText(text: string): string {
+    return text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  /**
+   * Whitelist of tags Telegram supports.
+   * Matches simple open/close tags and `<a href="...">`.
+   */
+  const ALLOWED_TAG_RE =
+    /^<\/?(b|i|u|s|code|pre|strong|em|ins|del|strike|blockquote)\s*>$/i;
+  const ALLOWED_A_OPEN_RE = /^<a\s+href="[^"]*"\s*>$/i;
+  const ALLOWED_A_CLOSE_RE = /^<\/a>$/i;
+
+  function isAllowedTag(tag: string): boolean {
+    return ALLOWED_TAG_RE.test(tag) || ALLOWED_A_OPEN_RE.test(tag) || ALLOWED_A_CLOSE_RE.test(tag);
+  }
+
+  /**
+   * Sanitize model output for Telegram HTML.
+   * Keeps whitelisted tags intact; escapes everything else.
+   */
+  function sanitizeHtml(text: string): string {
+    const parts: string[] = [];
+    let pos = 0;
+    const tagRe = /<\/?[a-zA-Z][^>]*>/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = tagRe.exec(text)) !== null) {
+      if (match.index > pos) {
+        parts.push(escapeHtmlText(text.slice(pos, match.index)));
+      }
+      parts.push(isAllowedTag(match[0]) ? match[0] : escapeHtmlText(match[0]));
+      pos = match.index + match[0].length;
+    }
+
+    if (pos < text.length) {
+      parts.push(escapeHtmlText(text.slice(pos)));
+    }
+
+    return parts.join("");
+  }
+
+  /** Strip HTML tags and unescape entities for plain-text fallback. */
+  function toPlainText(html: string): string {
+    return html
+      .replace(/<[^>]*>/g, "")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, "\"");
+  }
+
+  /**
+   * Find a safe break point that doesn't split inside an HTML tag.
+   * After sanitisation the only raw `<`/`>` belong to whitelisted tags.
+   */
+  function safeSplit(text: string, maxLen: number): number {
+    const nlPos = text.lastIndexOf("\n", maxLen);
+    let bp = nlPos > 0 ? nlPos : maxLen;
+
+    // If the break falls inside a tag (unclosed `<`), move before it.
+    const lastOpen = text.lastIndexOf("<", bp);
+    const lastClose = text.lastIndexOf(">", bp);
+    if (lastOpen > lastClose && lastOpen > 0) {
+      bp = lastOpen;
+    }
+
+    return bp;
+  }
+
   async function sendLongMessage(
     ctx: Context,
     chatId: number,
-    text: string,
+    rawText: string,
   ): Promise<void> {
+    const text = sanitizeHtml(rawText);
+
     if (text.length <= MAX_MESSAGE_LENGTH) {
-      await ctx.api.sendMessage(chatId, text);
+      try {
+        await ctx.api.sendMessage(chatId, text, { parse_mode: "HTML" });
+      } catch {
+        await ctx.api.sendMessage(chatId, toPlainText(text));
+      }
       return;
     }
 
-    // Split on newlines where possible, falling back to hard splits.
     let remaining = text;
     while (remaining.length > 0) {
       let chunk: string;
@@ -207,12 +288,15 @@ export async function startTelegramBot(
         chunk = remaining;
         remaining = "";
       } else {
-        const splitAt = remaining.lastIndexOf("\n", MAX_MESSAGE_LENGTH);
-        const breakPoint = splitAt > 0 ? splitAt : MAX_MESSAGE_LENGTH;
-        chunk = remaining.slice(0, breakPoint);
-        remaining = remaining.slice(breakPoint).replace(/^\n/, "");
+        const bp = safeSplit(remaining, MAX_MESSAGE_LENGTH);
+        chunk = remaining.slice(0, bp);
+        remaining = remaining.slice(bp).replace(/^\n/, "");
       }
-      await ctx.api.sendMessage(chatId, chunk);
+      try {
+        await ctx.api.sendMessage(chatId, chunk, { parse_mode: "HTML" });
+      } catch {
+        await ctx.api.sendMessage(chatId, toPlainText(chunk));
+      }
     }
   }
 
