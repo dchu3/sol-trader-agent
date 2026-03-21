@@ -205,7 +205,7 @@ export async function startTelegramBot(
    */
   const ALLOWED_TAG_RE =
     /^<\/?(b|i|u|s|code|pre|strong|em|ins|del|strike|blockquote)\s*>$/i;
-  const ALLOWED_A_OPEN_RE = /^<a\s+href="[^"]*"\s*>$/i;
+  const ALLOWED_A_OPEN_RE = /^<a\s+href="https?:\/\/[^"]*"\s*>$/i;
   const ALLOWED_A_CLOSE_RE = /^<\/a>$/i;
 
   function isAllowedTag(tag: string): boolean {
@@ -265,6 +265,67 @@ export async function startTelegramBot(
     return bp;
   }
 
+  /**
+   * Track which HTML tags are open in a chunk so we can close/reopen
+   * them across chunk boundaries.
+   */
+  const SELF_CLOSING_RE = /^<\/?(b|i|u|s|code|pre|strong|em|ins|del|strike|blockquote)\s*>$/i;
+
+  function getTagName(tag: string): string | null {
+    const m = tag.match(/^<\/?\s*([a-zA-Z]+)/);
+    return m ? m[1].toLowerCase() : null;
+  }
+
+  function isClosingTag(tag: string): boolean {
+    return tag.startsWith("</");
+  }
+
+  /**
+   * Compute the stack of unclosed tags in a chunk of sanitized HTML.
+   * Returns opening tags in order (e.g. ["b", "i"]).
+   */
+  function openTagStack(html: string): string[] {
+    const stack: string[] = [];
+    const tagRe = /<\/?[a-zA-Z][^>]*>/g;
+    let m: RegExpExecArray | null;
+    while ((m = tagRe.exec(html)) !== null) {
+      const name = getTagName(m[0]);
+      if (!name) continue;
+      if (isClosingTag(m[0])) {
+        const idx = stack.lastIndexOf(name);
+        if (idx !== -1) stack.splice(idx, 1);
+      } else if (SELF_CLOSING_RE.test(m[0]) || /^<a\s/i.test(m[0])) {
+        stack.push(name);
+      }
+    }
+    return stack;
+  }
+
+  /** Check if a Telegram API error is an HTML parse failure. */
+  function isHtmlParseError(err: unknown): boolean {
+    if (!(err instanceof Error)) return false;
+    const msg = err.message.toLowerCase();
+    return msg.includes("can't parse") || msg.includes("bad request") || msg.includes("entities");
+  }
+
+  /** Try to send with HTML; fall back to plain text only for parse errors. */
+  async function sendHtmlWithFallback(
+    ctx: Context,
+    chatId: number,
+    html: string,
+  ): Promise<void> {
+    try {
+      await ctx.api.sendMessage(chatId, html, { parse_mode: "HTML" });
+    } catch (err) {
+      if (isHtmlParseError(err)) {
+        debug(`Telegram HTML parse error, falling back to plain text: ${err instanceof Error ? err.message : String(err)}`);
+        await ctx.api.sendMessage(chatId, toPlainText(html));
+      } else {
+        throw err;
+      }
+    }
+  }
+
   async function sendLongMessage(
     ctx: Context,
     chatId: number,
@@ -273,30 +334,37 @@ export async function startTelegramBot(
     const text = sanitizeHtml(rawText);
 
     if (text.length <= MAX_MESSAGE_LENGTH) {
-      try {
-        await ctx.api.sendMessage(chatId, text, { parse_mode: "HTML" });
-      } catch {
-        await ctx.api.sendMessage(chatId, toPlainText(text));
-      }
+      await sendHtmlWithFallback(ctx, chatId, text);
       return;
     }
 
     let remaining = text;
+    /** Tags left open from the previous chunk that need reopening. */
+    let carryOver: string[] = [];
+
     while (remaining.length > 0) {
+      // Prepend reopened tags from the previous chunk.
+      const prefix = carryOver.map((t) => `<${t}>`).join("");
+      const budget = MAX_MESSAGE_LENGTH - prefix.length;
+
       let chunk: string;
-      if (remaining.length <= MAX_MESSAGE_LENGTH) {
+      if (remaining.length <= budget) {
         chunk = remaining;
         remaining = "";
       } else {
-        const bp = safeSplit(remaining, MAX_MESSAGE_LENGTH);
+        const bp = safeSplit(remaining, budget);
         chunk = remaining.slice(0, bp);
         remaining = remaining.slice(bp).replace(/^\n/, "");
       }
-      try {
-        await ctx.api.sendMessage(chatId, chunk, { parse_mode: "HTML" });
-      } catch {
-        await ctx.api.sendMessage(chatId, toPlainText(chunk));
-      }
+
+      // Close any tags left open in this chunk.
+      const open = openTagStack(prefix + chunk);
+      const suffix = open.reverse().map((t) => `</${t}>`).join("");
+
+      await sendHtmlWithFallback(ctx, chatId, prefix + chunk + suffix);
+
+      // The tags we just force-closed need reopening in the next chunk.
+      carryOver = [...open].reverse();
     }
   }
 
