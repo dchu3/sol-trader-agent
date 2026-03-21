@@ -1,7 +1,7 @@
 import { Bot, InlineKeyboard, type Context } from "grammy";
 import type { Content } from "@google/genai";
 import type { Config } from "./config.js";
-import type { ToolRouter, ConfirmFn } from "./agent.js";
+import type { ToolRouter, ConfirmFn, Channel } from "./agent.js";
 import { runAgent } from "./agent.js";
 import { debug } from "./logger.js";
 
@@ -178,6 +178,7 @@ export async function startTelegramBot(
         history,
         config.walletAddress,
         confirmFn,
+        "telegram",
       );
 
       await sendLongMessage(ctx, chatId, answer);
@@ -189,30 +190,213 @@ export async function startTelegramBot(
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────
+
+  /** Escape &, <, > in plain-text segments for Telegram HTML. */
+  function escapeHtmlText(text: string): string {
+    return text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  /**
+   * Whitelist of tags Telegram supports.
+   * Matches simple open/close tags and `<a href="...">`.
+   */
+  const ALLOWED_TAG_RE =
+    /^<\/?(b|i|u|s|code|pre|strong|em|ins|del|strike|blockquote)\s*>$/i;
+  const ALLOWED_A_OPEN_RE = /^<a\s+href="https?:\/\/[^"]*"\s*>$/i;
+  const ALLOWED_A_CLOSE_RE = /^<\/a>$/i;
+
+  function isAllowedTag(tag: string): boolean {
+    return ALLOWED_TAG_RE.test(tag) || ALLOWED_A_OPEN_RE.test(tag) || ALLOWED_A_CLOSE_RE.test(tag);
+  }
+
+  /**
+   * Sanitize model output for Telegram HTML.
+   * Keeps whitelisted tags intact; escapes everything else.
+   */
+  function sanitizeHtml(text: string): string {
+    const parts: string[] = [];
+    let pos = 0;
+    const tagRe = /<\/?[a-zA-Z][^>]*>/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = tagRe.exec(text)) !== null) {
+      if (match.index > pos) {
+        parts.push(escapeHtmlText(text.slice(pos, match.index)));
+      }
+      parts.push(isAllowedTag(match[0]) ? match[0] : escapeHtmlText(match[0]));
+      pos = match.index + match[0].length;
+    }
+
+    if (pos < text.length) {
+      parts.push(escapeHtmlText(text.slice(pos)));
+    }
+
+    return parts.join("");
+  }
+
+  /** Strip HTML tags and unescape entities for plain-text fallback. */
+  function toPlainText(html: string): string {
+    return html
+      .replace(/<[^>]*>/g, "")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, "\"");
+  }
+
+  /**
+   * Find a safe break point that doesn't split inside an HTML tag or entity.
+   * After sanitisation the only raw `<`/`>` belong to whitelisted tags,
+   * and `&` starts escaped entities like `&amp;`, `&lt;`, `&gt;`.
+   */
+  function safeSplit(text: string, maxLen: number): number {
+    const nlPos = text.lastIndexOf("\n", maxLen);
+    let bp = nlPos > 0 ? nlPos : maxLen;
+
+    // If the break falls inside a tag (unclosed `<`), move before it.
+    const lastOpen = text.lastIndexOf("<", bp);
+    const lastClose = text.lastIndexOf(">", bp);
+    if (lastOpen > lastClose && lastOpen > 0) {
+      bp = lastOpen;
+    }
+
+    // If the break falls inside an HTML entity (`&...;`), move before the `&`.
+    const lastAmp = text.lastIndexOf("&", bp);
+    if (lastAmp >= 0 && lastAmp < bp) {
+      const semi = text.indexOf(";", lastAmp);
+      if (semi >= bp) {
+        bp = lastAmp;
+      }
+    }
+
+    return bp;
+  }
+
+  /**
+   * Track which HTML tags are open in a chunk so we can close/reopen
+   * them across chunk boundaries.
+   */
+  const SELF_CLOSING_RE = /^<\/?(b|i|u|s|code|pre|strong|em|ins|del|strike|blockquote)\s*>$/i;
+
+  function getTagName(tag: string): string | null {
+    const m = tag.match(/^<\/?\s*([a-zA-Z]+)/);
+    return m ? m[1].toLowerCase() : null;
+  }
+
+  function isClosingTag(tag: string): boolean {
+    return tag.startsWith("</");
+  }
+
+  interface OpenTag {
+    /** Lowercase tag name, e.g. "b", "a". */
+    name: string;
+    /** Full opening tag string, e.g. "<b>" or '<a href="https://...">'. */
+    openTag: string;
+  }
+
+  /**
+   * Compute the stack of unclosed tags in a chunk of sanitized HTML.
+   * Returns full opening tag info so anchors can be reconstructed with href.
+   */
+  function openTagStack(html: string): OpenTag[] {
+    const stack: OpenTag[] = [];
+    const tagRe = /<\/?[a-zA-Z][^>]*>/g;
+    let m: RegExpExecArray | null;
+    while ((m = tagRe.exec(html)) !== null) {
+      const name = getTagName(m[0]);
+      if (!name) continue;
+      if (isClosingTag(m[0])) {
+        const idx = (() => { for (let i = stack.length - 1; i >= 0; i--) { if (stack[i].name === name) return i; } return -1; })();
+        if (idx !== -1) stack.splice(idx, 1);
+      } else if (SELF_CLOSING_RE.test(m[0]) || /^<a\s/i.test(m[0])) {
+        stack.push({ name, openTag: m[0] });
+      }
+    }
+    return stack;
+  }
+
+  /** Check if a Telegram API error is an HTML parse failure. */
+  function isHtmlParseError(err: unknown): boolean {
+    if (!(err instanceof Error)) return false;
+    const msg = err.message.toLowerCase();
+    if (!msg.includes("can't parse")) return false;
+    return msg.includes("entities") || msg.includes("message text");
+  }
+
+  /** Try to send with HTML; fall back to plain text only for parse errors. */
+  async function sendHtmlWithFallback(
+    ctx: Context,
+    chatId: number,
+    html: string,
+  ): Promise<void> {
+    try {
+      await ctx.api.sendMessage(chatId, html, { parse_mode: "HTML" });
+    } catch (err) {
+      if (isHtmlParseError(err)) {
+        debug(`Telegram HTML parse error, falling back to plain text: ${err instanceof Error ? err.message : String(err)}`);
+        await ctx.api.sendMessage(chatId, toPlainText(html));
+      } else {
+        throw err;
+      }
+    }
+  }
+
   async function sendLongMessage(
     ctx: Context,
     chatId: number,
-    text: string,
+    rawText: string,
   ): Promise<void> {
+    const text = sanitizeHtml(rawText);
+
     if (text.length <= MAX_MESSAGE_LENGTH) {
-      await ctx.api.sendMessage(chatId, text);
+      await sendHtmlWithFallback(ctx, chatId, text);
       return;
     }
 
-    // Split on newlines where possible, falling back to hard splits.
     let remaining = text;
+    /** Tags left open from the previous chunk that need reopening. */
+    let carryOver: OpenTag[] = [];
+
     while (remaining.length > 0) {
+      // Prepend reopened tags from the previous chunk.
+      const prefix = carryOver.map((t) => t.openTag).join("");
+
       let chunk: string;
-      if (remaining.length <= MAX_MESSAGE_LENGTH) {
+      if (remaining.length + prefix.length <= MAX_MESSAGE_LENGTH) {
         chunk = remaining;
         remaining = "";
       } else {
-        const splitAt = remaining.lastIndexOf("\n", MAX_MESSAGE_LENGTH);
-        const breakPoint = splitAt > 0 ? splitAt : MAX_MESSAGE_LENGTH;
-        chunk = remaining.slice(0, breakPoint);
-        remaining = remaining.slice(breakPoint).replace(/^\n/, "");
+        // Compute budget: reserve space for prefix, then select chunk,
+        // then compute the actual suffix and trim if needed.
+        const roughBudget = MAX_MESSAGE_LENGTH - prefix.length - 200;
+        const bp = safeSplit(remaining, Math.max(roughBudget, 1));
+        chunk = remaining.slice(0, bp);
+        remaining = remaining.slice(bp).replace(/^\n/, "");
       }
-      await ctx.api.sendMessage(chatId, chunk);
+
+      // Close any tags left open in this chunk.
+      const open = openTagStack(prefix + chunk);
+      const suffix = [...open].reverse().map((t) => `</${t.name}>`).join("");
+
+      // If prefix + chunk + suffix exceeds the limit, trim chunk to fit.
+      const maxChunkLen = MAX_MESSAGE_LENGTH - prefix.length - suffix.length;
+      if (chunk.length > maxChunkLen) {
+        const trimBp = safeSplit(chunk, maxChunkLen);
+        remaining = chunk.slice(trimBp).replace(/^\n/, "") + remaining;
+        chunk = chunk.slice(0, trimBp);
+      }
+
+      // Recompute suffix after potential trim.
+      const finalOpen = openTagStack(prefix + chunk);
+      const finalSuffix = [...finalOpen].reverse().map((t) => `</${t.name}>`).join("");
+
+      await sendHtmlWithFallback(ctx, chatId, prefix + chunk + finalSuffix);
+
+      // The tags we just force-closed need reopening in the next chunk.
+      carryOver = finalOpen;
     }
   }
 
