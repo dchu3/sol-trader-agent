@@ -183,8 +183,8 @@ if [ "$CONFIGURE_ENV" = "true" ]; then
     prompt_input VERBOSE "Enable verbose/debug logging? (true/false)" "false"
   fi
 
-  # Write .env
-  cat > "$AGENT_DIR/.env" <<ENVFILE
+  # Write .env — create with restrictive permissions from the start
+  (umask 077; cat > "$AGENT_DIR/.env" <<ENVFILE
 # Required: Google Gemini API key
 GEMINI_API_KEY=${GEMINI_API_KEY}
 
@@ -194,6 +194,7 @@ REMOTE_MCP_URL=${REMOTE_MCP_URL}
 # Required: Solana wallet private key (base58-encoded, used for x402 payments and trading)
 SOLANA_PRIVATE_KEY=${SOLANA_PRIVATE_KEY}
 ENVFILE
+  )
 
   # Append optional settings only if set
   {

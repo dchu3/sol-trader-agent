@@ -1,7 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as readline from "node:readline/promises";
-import { setVerbose, isVerbose } from "./logger.js";
+import { fileURLToPath } from "node:url";
+import { setVerbose } from "./logger.js";
 
 /** Prompt for input, suppressing echo for secret fields. */
 async function question(rl: readline.Interface, prompt: string, secret: boolean): Promise<string> {
@@ -102,7 +103,7 @@ function maskValue(value: string): string {
 /** Find the .env file path (project root). */
 function findEnvPath(): string {
   // Walk up from dist/ to find the project root with .env or .env.example
-  let dir = path.dirname(new URL(import.meta.url).pathname);
+  let dir = path.dirname(fileURLToPath(import.meta.url));
   for (let i = 0; i < 5; i++) {
     if (fs.existsSync(path.join(dir, "package.json"))) {
       return path.join(dir, ".env");
@@ -191,6 +192,7 @@ function writeEnvFile(envPath: string, values: Map<string, string>): void {
     encoding: "utf-8",
     mode: 0o600,
   });
+  fs.chmodSync(envPath, 0o600);
 }
 
 /**
