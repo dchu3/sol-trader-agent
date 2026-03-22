@@ -48,7 +48,7 @@ prompt_input() {
   fi
 
   input="${input:-$default}"
-  eval "$varname=\$input"
+  printf -v "$varname" '%s' "$input"
 }
 
 prompt_yn() {
@@ -221,6 +221,7 @@ ENVFILE
   } >> "$AGENT_DIR/.env"
 
   info ".env written to $AGENT_DIR/.env"
+  chmod 600 "$AGENT_DIR/.env"
 fi
 
 # ── 5. Optional dex-trader-mcp setup ────────────────────────────────

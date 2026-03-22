@@ -3,6 +3,35 @@ import * as path from "node:path";
 import * as readline from "node:readline/promises";
 import { setVerbose, isVerbose } from "./logger.js";
 
+/** Prompt for input, suppressing echo for secret fields. */
+async function question(rl: readline.Interface, prompt: string, secret: boolean): Promise<string> {
+  if (!secret) return rl.question(prompt);
+
+  // Suppress character echo by intercepting output.write after the prompt is displayed.
+  // The readline Interface has an output stream but the promises type doesn't expose it.
+  const output = (rl as unknown as { output: NodeJS.WritableStream }).output;
+  if (!output) return rl.question(prompt);
+  const originalWrite = output.write.bind(output) as (chunk: string | Uint8Array, ...args: unknown[]) => boolean;
+  let promptWritten = false;
+
+  output.write = function (chunk: unknown, ...args: unknown[]): boolean {
+    if (!promptWritten) {
+      promptWritten = true;
+      return originalWrite(chunk as string | Uint8Array, ...args);
+    }
+    // Swallow echoed characters
+    return true;
+  } as typeof output.write;
+
+  try {
+    const answer = await rl.question(prompt);
+    return answer;
+  } finally {
+    output.write = originalWrite;
+    output.write("\n");
+  }
+}
+
 /** Env variable definition for the configure menu. */
 interface EnvVar {
   key: string;
@@ -24,6 +53,45 @@ const ENV_VARS: EnvVar[] = [
   { key: "TELEGRAM_CHAT_ID", label: "Telegram chat ID", required: false, secret: false },
   { key: "VERBOSE", label: "Verbose/debug logging", required: false, secret: false },
 ];
+
+/** Validate a field value. Returns an error message or null if valid. */
+function validateField(key: string, value: string): string | null {
+  if (value === "") return null; // Empty is handled by required check elsewhere
+
+  switch (key) {
+    case "REMOTE_MCP_URL": {
+      try {
+        const url = new URL(value);
+        if (url.protocol === "https:") return null;
+        if (
+          url.protocol === "http:" &&
+          (url.hostname === "localhost" ||
+            url.hostname === "127.0.0.1" ||
+            url.hostname === "[::1]")
+        ) {
+          return null;
+        }
+        return "Must use https:// (http:// only allowed for localhost/127.0.0.1/[::1])";
+      } catch {
+        return "Must be a valid URL";
+      }
+    }
+    case "TELEGRAM_CHAT_ID": {
+      const num = Number(value);
+      if (!Number.isInteger(num) || num === 0) {
+        return "Must be a valid non-zero integer";
+      }
+      return null;
+    }
+    case "VERBOSE":
+      if (!["true", "false", "1", "0"].includes(value)) {
+        return "Must be true, false, 1, or 0";
+      }
+      return null;
+    default:
+      return null;
+  }
+}
 
 /** Mask a secret value for display, showing first 4 and last 4 chars. */
 function maskValue(value: string): string {
@@ -118,8 +186,11 @@ function writeEnvFile(envPath: string, values: Map<string, string>): void {
   }
 
   const output = updatedLines.map((l) => l.raw).join("\n");
-  // Ensure file ends with a newline
-  fs.writeFileSync(envPath, output.endsWith("\n") ? output : output + "\n", "utf-8");
+  // Ensure file ends with a newline; restrict to owner-only (secrets inside)
+  fs.writeFileSync(envPath, output.endsWith("\n") ? output : output + "\n", {
+    encoding: "utf-8",
+    mode: 0o600,
+  });
 }
 
 /**
@@ -184,9 +255,13 @@ export async function runConfigure(rl: readline.Interface): Promise<boolean> {
       console.log(`\n  ${v.label} (${v.key})`);
       console.log(`  Current: ${displayCurrent}`);
 
+      const prompt = v.secret
+        ? `  New value (hidden; Enter to keep, "clear" to remove): `
+        : `  New value (Enter to keep, "clear" to remove): `;
+
       let newValue: string;
       try {
-        newValue = await rl.question(`  New value (Enter to keep, "clear" to remove): `);
+        newValue = await question(rl, prompt, v.secret);
       } catch {
         break;
       }
@@ -206,6 +281,11 @@ export async function runConfigure(rl: readline.Interface): Promise<boolean> {
         changed = true;
         console.log(`  ✓ ${v.key} cleared`);
       } else {
+        const error = validateField(v.key, trimmed);
+        if (error) {
+          console.log(`  ❌ Invalid: ${error}`);
+          continue;
+        }
         updatedValues.set(v.key, trimmed);
         changed = true;
         console.log(`  ✓ ${v.key} updated`);
