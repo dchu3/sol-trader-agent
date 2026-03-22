@@ -153,7 +153,14 @@ async function main(): Promise<void> {
         continue;
       }
       if (trimmed === "/configure") {
-        await runConfigure(rl);
+        try {
+          await runConfigure(rl);
+        } catch (err) {
+          console.error(
+            "Configuration error:",
+            err instanceof Error ? err.message : String(err),
+          );
+        }
         continue;
       }
 

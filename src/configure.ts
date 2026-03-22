@@ -192,7 +192,11 @@ function writeEnvFile(envPath: string, values: Map<string, string>): void {
     encoding: "utf-8",
     mode: 0o600,
   });
-  fs.chmodSync(envPath, 0o600);
+  try {
+    fs.chmodSync(envPath, 0o600);
+  } catch {
+    // Some platforms/filesystems (e.g. Windows) don't support POSIX chmod; ignore.
+  }
 }
 
 /**
@@ -296,6 +300,19 @@ export async function runConfigure(rl: readline.Interface): Promise<boolean> {
   }
 
   if (changed) {
+    // Verify required fields are present before saving
+    const missingRequired = ENV_VARS.filter(
+      (v) => v.required && !(updatedValues.get(v.key) ?? ""),
+    );
+    if (missingRequired.length > 0) {
+      console.log("\n  ❌ Cannot save — the following required fields are missing:");
+      for (const v of missingRequired) {
+        console.log(`     • ${v.label} (${v.key})`);
+      }
+      console.log("  Please set them before saving.\n");
+      return false;
+    }
+
     writeEnvFile(envPath, updatedValues);
     console.log(`\n  ✅ Changes saved to ${envPath}`);
 
