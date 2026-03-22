@@ -4,33 +4,9 @@ import * as readline from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { setVerbose } from "./logger.js";
 
-/** Prompt for input, suppressing echo for secret fields. */
-async function question(rl: readline.Interface, prompt: string, secret: boolean): Promise<string> {
-  if (!secret) return rl.question(prompt);
-
-  // Suppress character echo by intercepting output.write after the prompt is displayed.
-  // The readline Interface has an output stream but the promises type doesn't expose it.
-  const output = (rl as unknown as { output: NodeJS.WritableStream }).output;
-  if (!output) return rl.question(prompt);
-  const originalWrite = output.write.bind(output) as (chunk: string | Uint8Array, ...args: unknown[]) => boolean;
-  let promptWritten = false;
-
-  output.write = function (chunk: unknown, ...args: unknown[]): boolean {
-    if (!promptWritten) {
-      promptWritten = true;
-      return originalWrite(chunk as string | Uint8Array, ...args);
-    }
-    // Swallow echoed characters
-    return true;
-  } as typeof output.write;
-
-  try {
-    const answer = await rl.question(prompt);
-    return answer;
-  } finally {
-    output.write = originalWrite;
-    output.write("\n");
-  }
+/** Prompt for input (always visible, even for secret fields). */
+async function question(rl: readline.Interface, prompt: string): Promise<string> {
+  return rl.question(prompt);
 }
 
 /** Env variable definition for the configure menu. */
@@ -247,7 +223,7 @@ export async function runConfigure(rl: readline.Interface): Promise<boolean> {
   while (true) {
     let choice: string;
     try {
-      choice = await rl.question("  Select setting number (0 to finish): ");
+      choice = await rl.question("  Select setting number (0 to finish):");
     } catch {
       break;
     }
@@ -275,12 +251,12 @@ export async function runConfigure(rl: readline.Interface): Promise<boolean> {
       console.log(`  Current: ${displayCurrent}`);
 
       const prompt = v.secret
-        ? `  New value (hidden; Enter to keep, "clear" to remove): `
-        : `  New value (Enter to keep, "clear" to remove): `;
+        ? `  New value (Enter to keep, "clear" to remove):`
+        : `  New value (Enter to keep, "clear" to remove):`;
 
       let newValue: string;
       try {
-        newValue = await question(rl, prompt, v.secret);
+        newValue = await question(rl, prompt);
       } catch {
         break;
       }
@@ -291,6 +267,7 @@ export async function runConfigure(rl: readline.Interface): Promise<boolean> {
         continue;
       }
 
+      // Check "clear" sentinel on raw input before prefix-stripping
       if (trimmed.toLowerCase() === "clear") {
         if (v.required) {
           console.log(`  ⚠️  ${v.key} is required and cannot be cleared.`);
@@ -300,12 +277,27 @@ export async function runConfigure(rl: readline.Interface): Promise<boolean> {
         changed = true;
         console.log(`  ✓ ${v.key} cleared`);
       } else {
-        const error = validateField(v.key, trimmed);
+        // Auto-strip key prefix when user pastes KEY=VALUE or KEY:VALUE
+        const prefixPattern = new RegExp(`^${v.key}[=:]\\s*`);
+        const stripped = trimmed.replace(prefixPattern, "");
+
+        if (stripped === "") {
+          // Pasted KEY= or KEY: with empty value — treat as clear
+          if (v.required) {
+            console.log(`  ⚠️  ${v.key} is required and cannot be cleared.`);
+            continue;
+          }
+          updatedValues.set(v.key, "");
+          changed = true;
+          console.log(`  ✓ ${v.key} cleared`);
+          continue;
+        }
+        const error = validateField(v.key, stripped);
         if (error) {
           console.log(`  ❌ Invalid: ${error}`);
           continue;
         }
-        updatedValues.set(v.key, trimmed);
+        updatedValues.set(v.key, stripped);
         changed = true;
         console.log(`  ✓ ${v.key} updated`);
       }
