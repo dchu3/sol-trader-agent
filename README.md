@@ -23,6 +23,8 @@ This will:
 3. Optionally install [dex-trader-mcp](https://github.com/dchu3/dex-trader-mcp) for DEX trading
 4. Build and get you ready to go
 
+> **Note:** API keys and secrets are displayed as you type/paste them during setup so you can verify correctness. Run the installer in a private terminal session.
+
 Then start the agent:
 
 ```bash

@@ -51,9 +51,8 @@ prompt_input() {
   local input
 
   if [ "$secret" = "true" ]; then
-    printf "  %s" "$prompt_text" >/dev/tty
-    read -r -s input </dev/tty
-    printf "\n" >/dev/tty
+    printf "  %s: " "$prompt_text" >/dev/tty
+    read -r input </dev/tty
   else
     if [ -n "$default" ]; then
       printf "  %s [%s]: " "$prompt_text" "$default" >/dev/tty
