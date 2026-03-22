@@ -30,6 +30,22 @@ error() { printf "%s[ERROR]%s %s\n" "$RED"    "$RESET" "$1"; }
 step()  { printf "\n%s▸ %s%s\n" "${BOLD}${CYAN}" "$1" "$RESET"; }
 
 # ── Read helper (works when piped via curl) ──────────────────────────
+
+# Quote a value for .env if it contains # (which dotenv treats as comment start)
+quote_env_value() {
+  local val="$1"
+  case "$val" in
+    *'#'*|*'"'*|*"'"*|*'`'*)
+      # Escape backslashes and double quotes, then wrap in double quotes
+      val=$(printf '%s' "$val" | sed 's/\\/\\\\/g; s/"/\\"/g')
+      printf '"%s"' "$val"
+      ;;
+    *)
+      printf '%s' "$val"
+      ;;
+  esac
+}
+
 prompt_input() {
   local varname="$1" prompt_text="$2" default="${3:-}" secret="${4:-false}"
   local input
@@ -145,8 +161,27 @@ if [ "$CONFIGURE_ENV" = "true" ]; then
     fi
   done
 
-  # Remote MCP URL
-  prompt_input REMOTE_MCP_URL "Remote MCP server URL" "https://svm402.com/mcp"
+  # Remote MCP URL (validate protocol)
+  REMOTE_MCP_URL=""
+  while :; do
+    prompt_input REMOTE_MCP_URL "Remote MCP server URL" "https://svm402.com/mcp"
+    if [ -z "$REMOTE_MCP_URL" ]; then
+      warn "Remote MCP server URL is required."
+      continue
+    fi
+    case "$REMOTE_MCP_URL" in
+      https://*)
+        break
+        ;;
+      http://localhost*|http://127.0.0.1*|"http://[::1]"*)
+        break
+        ;;
+      *)
+        warn "Must use https:// (http:// only allowed for localhost/127.0.0.1/[::1])."
+        REMOTE_MCP_URL=""
+        ;;
+    esac
+  done
 
   # Solana Private Key
   SOLANA_PRIVATE_KEY=""
@@ -163,8 +198,27 @@ if [ "$CONFIGURE_ENV" = "true" ]; then
   printf "\n"
   if prompt_yn "Configure Telegram bot access?"; then
     printf "\n  ${BOLD}Telegram settings:${RESET}\n\n"
-    prompt_input TELEGRAM_BOT_TOKEN "Bot token (create via @BotFather on Telegram)" ""
-    prompt_input TELEGRAM_CHAT_ID "Your chat ID (message @userinfobot on Telegram)" ""
+    prompt_input TELEGRAM_BOT_TOKEN "Bot token (create via @BotFather on Telegram)" "" true
+    # Validate Telegram chat ID: must be a non-zero integer
+    while :; do
+      prompt_input TELEGRAM_CHAT_ID "Your chat ID (message @userinfobot on Telegram)" ""
+      if [ -z "$TELEGRAM_CHAT_ID" ]; then
+        break
+      fi
+      case "$TELEGRAM_CHAT_ID" in
+        *[!0-9-]*)
+          warn "Telegram chat ID must be a non-zero integer."
+          TELEGRAM_CHAT_ID=""
+          ;;
+        0)
+          warn "Telegram chat ID cannot be 0."
+          TELEGRAM_CHAT_ID=""
+          ;;
+        *)
+          break
+          ;;
+      esac
+    done
   fi
 
   # Optional: Advanced settings
@@ -180,48 +234,64 @@ if [ "$CONFIGURE_ENV" = "true" ]; then
     prompt_input SOLANA_RPC_URL "Solana RPC URL" ""
     prompt_input JUPITER_API_BASE "Jupiter API base URL" ""
     prompt_input JUPITER_API_KEY "Jupiter API key" "" true
-    prompt_input VERBOSE "Enable verbose/debug logging? (true/false)" "false"
+    while :; do
+      prompt_input VERBOSE "Enable verbose/debug logging? (true/false/1/0)" "false"
+      case "$VERBOSE" in
+        true|false|1|0)
+          break
+          ;;
+        *)
+          warn "VERBOSE must be one of: true, false, 1, 0."
+          ;;
+      esac
+    done
   fi
 
   # Write .env — create with restrictive permissions from the start
-  (umask 077; cat > "$AGENT_DIR/.env" <<ENVFILE
-# Required: Google Gemini API key
-GEMINI_API_KEY=${GEMINI_API_KEY}
+  (umask 077; : > "$AGENT_DIR/.env")
 
-# Required: URL of the remote MCP server (StreamableHTTP transport).
-REMOTE_MCP_URL=${REMOTE_MCP_URL}
-
-# Required: Solana wallet private key (base58-encoded, used for x402 payments and trading)
-SOLANA_PRIVATE_KEY=${SOLANA_PRIVATE_KEY}
-ENVFILE
-  )
+  {
+    printf "# Required: Google Gemini API key\nGEMINI_API_KEY=%s\n" "$(quote_env_value "$GEMINI_API_KEY")"
+    printf "\n# Required: URL of the remote MCP server (StreamableHTTP transport).\nREMOTE_MCP_URL=%s\n" "$(quote_env_value "$REMOTE_MCP_URL")"
+    printf "\n# Required: Solana wallet private key (base58-encoded, used for x402 payments and trading)\nSOLANA_PRIVATE_KEY=%s\n" "$(quote_env_value "$SOLANA_PRIVATE_KEY")"
+  } >> "$AGENT_DIR/.env"
 
   # Append optional settings only if set
   {
     if [ -n "$GEMINI_MODEL" ] && [ "$GEMINI_MODEL" != "gemini-3.1-flash-lite-preview" ]; then
-      printf "\n# Optional: Gemini model to use\nGEMINI_MODEL=%s\n" "$GEMINI_MODEL"
+      printf "\n# Optional: Gemini model to use\nGEMINI_MODEL=%s\n" "$(quote_env_value "$GEMINI_MODEL")"
     fi
     if [ -n "$SOLANA_RPC_URL" ]; then
-      printf "\n# Optional: Custom Solana RPC URL\nSOLANA_RPC_URL=%s\n" "$SOLANA_RPC_URL"
+      printf "\n# Optional: Custom Solana RPC URL\nSOLANA_RPC_URL=%s\n" "$(quote_env_value "$SOLANA_RPC_URL")"
     fi
     if [ -n "$JUPITER_API_BASE" ]; then
-      printf "\n# Optional: Jupiter API base URL\nJUPITER_API_BASE=%s\n" "$JUPITER_API_BASE"
+      printf "\n# Optional: Jupiter API base URL\nJUPITER_API_BASE=%s\n" "$(quote_env_value "$JUPITER_API_BASE")"
     fi
     if [ -n "$JUPITER_API_KEY" ]; then
-      printf "\n# Optional: Jupiter API key\nJUPITER_API_KEY=%s\n" "$JUPITER_API_KEY"
+      printf "\n# Optional: Jupiter API key\nJUPITER_API_KEY=%s\n" "$(quote_env_value "$JUPITER_API_KEY")"
     fi
     if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
-      printf "\n# Optional: Telegram bot token\nTELEGRAM_BOT_TOKEN=%s\n" "$TELEGRAM_BOT_TOKEN"
+      printf "\n# Optional: Telegram bot token\nTELEGRAM_BOT_TOKEN=%s\n" "$(quote_env_value "$TELEGRAM_BOT_TOKEN")"
     fi
     if [ -n "$TELEGRAM_CHAT_ID" ]; then
-      printf "\n# Optional: Telegram chat ID (restricts bot to this user)\nTELEGRAM_CHAT_ID=%s\n" "$TELEGRAM_CHAT_ID"
+      printf "\n# Optional: Telegram chat ID (restricts bot to this user)\nTELEGRAM_CHAT_ID=%s\n" "$(quote_env_value "$TELEGRAM_CHAT_ID")"
     fi
-    if [ "$VERBOSE" = "true" ] || [ "$VERBOSE" = "1" ]; then
-      printf "\n# Optional: Enable debug logging\nVERBOSE=%s\n" "$VERBOSE"
+    if [ -n "$VERBOSE" ]; then
+      printf "\n# Optional: Enable debug logging\nVERBOSE=%s\n" "$(quote_env_value "$VERBOSE")"
     fi
   } >> "$AGENT_DIR/.env"
 
+  # Warn if Telegram bot is enabled without chat ID restriction
+  if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -z "$TELEGRAM_CHAT_ID" ]; then
+    warn "TELEGRAM_BOT_TOKEN is set without TELEGRAM_CHAT_ID — the bot will accept messages from ANY user."
+    warn "Strongly recommended: set TELEGRAM_CHAT_ID to restrict access."
+  fi
+
   info ".env written to $AGENT_DIR/.env"
+fi
+
+# Ensure .env permissions are restricted regardless of whether we just wrote it
+if [ -f "$AGENT_DIR/.env" ]; then
   chmod 600 "$AGENT_DIR/.env"
 fi
 

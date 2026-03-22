@@ -102,7 +102,7 @@ function maskValue(value: string): string {
 
 /** Find the .env file path (project root). */
 function findEnvPath(): string {
-  // Walk up from dist/ to find the project root with .env or .env.example
+  // Walk up from dist/ to find the project root containing package.json
   let dir = path.dirname(fileURLToPath(import.meta.url));
   for (let i = 0; i < 5; i++) {
     if (fs.existsSync(path.join(dir, "package.json"))) {
@@ -158,6 +158,16 @@ function readCurrentValues(envPath: string): Map<string, string> {
   return values;
 }
 
+/** Quote a value for .env if it contains characters that dotenv would misinterpret. */
+function quoteEnvValue(value: string): string {
+  if (value.includes("#") || value.includes("'") || value.includes('"') || value.includes("`")) {
+    // Use double quotes; escape any embedded double quotes and backslashes
+    const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    return `"${escaped}"`;
+  }
+  return value;
+}
+
 /** Write a key-value map back to .env, preserving existing structure where possible. */
 function writeEnvFile(envPath: string, values: Map<string, string>): void {
   const existingContent = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf-8") : "";
@@ -173,7 +183,8 @@ function writeEnvFile(envPath: string, values: Map<string, string>): void {
         // Comment out removed values
         return { ...line, raw: `# ${line.key}=` };
       }
-      return { ...line, raw: `${line.key}=${newValue}`, value: newValue };
+      const quoted = quoteEnvValue(newValue);
+      return { ...line, raw: `${line.key}=${quoted}`, value: newValue };
     }
     return line;
   });
@@ -181,22 +192,24 @@ function writeEnvFile(envPath: string, values: Map<string, string>): void {
   // Append any new keys not already in the file
   for (const [key, value] of values) {
     if (!writtenKeys.has(key) && value !== "") {
+      const quoted = quoteEnvValue(value);
       updatedLines.push({ type: "blank", raw: "" });
-      updatedLines.push({ type: "assignment", raw: `${key}=${value}`, key, value });
+      updatedLines.push({ type: "assignment", raw: `${key}=${quoted}`, key, value });
     }
   }
 
   const output = updatedLines.map((l) => l.raw).join("\n");
-  // Ensure file ends with a newline; restrict to owner-only (secrets inside)
-  fs.writeFileSync(envPath, output.endsWith("\n") ? output : output + "\n", {
-    encoding: "utf-8",
-    mode: 0o600,
-  });
+  const content = output.endsWith("\n") ? output : output + "\n";
+
+  // Atomic write: temp file + rename to prevent data loss on interruption
+  const tmpPath = `${envPath}.tmp`;
+  fs.writeFileSync(tmpPath, content, { encoding: "utf-8", mode: 0o600 });
   try {
-    fs.chmodSync(envPath, 0o600);
+    fs.chmodSync(tmpPath, 0o600);
   } catch {
     // Some platforms/filesystems (e.g. Windows) don't support POSIX chmod; ignore.
   }
+  fs.renameSync(tmpPath, envPath);
 }
 
 /**
@@ -315,6 +328,14 @@ export async function runConfigure(rl: readline.Interface): Promise<boolean> {
 
     writeEnvFile(envPath, updatedValues);
     console.log(`\n  ✅ Changes saved to ${envPath}`);
+
+    // Warn if Telegram bot is enabled without chat ID restriction
+    const botToken = updatedValues.get("TELEGRAM_BOT_TOKEN") ?? "";
+    const chatId = updatedValues.get("TELEGRAM_CHAT_ID") ?? "";
+    if (botToken && !chatId) {
+      console.log("  ⚠️  TELEGRAM_BOT_TOKEN is set without TELEGRAM_CHAT_ID — the bot will accept messages from ANY user.");
+      console.log("     Strongly recommended: set TELEGRAM_CHAT_ID to restrict access.");
+    }
 
     // Apply VERBOSE live if it changed
     const newVerbose = updatedValues.get("VERBOSE");
