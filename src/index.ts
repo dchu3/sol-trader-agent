@@ -8,6 +8,7 @@ import { type Content } from "@google/genai";
 import { runAgent, createToolRouter } from "./agent.js";
 import { setVerbose } from "./logger.js";
 import { startTelegramBot } from "./telegram.js";
+import { runConfigure } from "./configure.js";
 
 function printHelp(): void {
   console.log(`
@@ -24,8 +25,9 @@ Example prompts:
   What's my balance?
 
 Commands:
-  /help   Show this help message
-  /quit   Exit the application
+  /help       Show this help message
+  /configure  View and update settings (.env)
+  /quit       Exit the application
 
 Token analysis is paid via x402 — you'll be asked to confirm before any
 funds are spent. Trading actions (buy/sell) also require confirmation.
@@ -148,6 +150,10 @@ async function main(): Promise<void> {
       if (trimmed === "/quit") break;
       if (trimmed === "/help") {
         printHelp();
+        continue;
+      }
+      if (trimmed === "/configure") {
+        await runConfigure(rl);
         continue;
       }
 
