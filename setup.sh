@@ -51,9 +51,8 @@ prompt_input() {
   local input
 
   if [ "$secret" = "true" ]; then
-    printf "  %s" "$prompt_text" >/dev/tty
-    read -r -s input </dev/tty
-    printf "\n" >/dev/tty
+    printf "  %s: " "$prompt_text" >/dev/tty
+    read -r input </dev/tty
   else
     if [ -n "$default" ]; then
       printf "  %s [%s]: " "$prompt_text" "$default" >/dev/tty
@@ -234,17 +233,9 @@ if [ "$CONFIGURE_ENV" = "true" ]; then
     prompt_input SOLANA_RPC_URL "Solana RPC URL" ""
     prompt_input JUPITER_API_BASE "Jupiter API base URL" ""
     prompt_input JUPITER_API_KEY "Jupiter API key" "" true
-    while :; do
-      prompt_input VERBOSE "Enable verbose/debug logging? (true/false/1/0)" "false"
-      case "$VERBOSE" in
-        true|false|1|0)
-          break
-          ;;
-        *)
-          warn "VERBOSE must be one of: true, false, 1, 0."
-          ;;
-      esac
-    done
+    if prompt_yn "Enable verbose/debug logging?"; then
+      VERBOSE="true"
+    fi
   fi
 
   # Write .env — create with restrictive permissions from the start
