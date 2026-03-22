@@ -262,17 +262,13 @@ export async function runConfigure(rl: readline.Interface): Promise<boolean> {
       }
 
       const trimmed = newValue.trim();
-
-      // Auto-strip key prefix when user pastes KEY=VALUE or KEY:VALUE
-      const prefixPattern = new RegExp(`^${v.key}[=:]\\s*`);
-      const stripped = trimmed.replace(prefixPattern, "");
-
-      if (stripped === "") {
+      if (trimmed === "") {
         // Keep existing value
         continue;
       }
 
-      if (stripped.toLowerCase() === "clear") {
+      // Check "clear" sentinel on raw input before prefix-stripping
+      if (trimmed.toLowerCase() === "clear") {
         if (v.required) {
           console.log(`  ⚠️  ${v.key} is required and cannot be cleared.`);
           continue;
@@ -281,6 +277,21 @@ export async function runConfigure(rl: readline.Interface): Promise<boolean> {
         changed = true;
         console.log(`  ✓ ${v.key} cleared`);
       } else {
+        // Auto-strip key prefix when user pastes KEY=VALUE or KEY:VALUE
+        const prefixPattern = new RegExp(`^${v.key}[=:]\\s*`);
+        const stripped = trimmed.replace(prefixPattern, "");
+
+        if (stripped === "") {
+          // Pasted KEY= or KEY: with empty value — treat as clear
+          if (v.required) {
+            console.log(`  ⚠️  ${v.key} is required and cannot be cleared.`);
+            continue;
+          }
+          updatedValues.set(v.key, "");
+          changed = true;
+          console.log(`  ✓ ${v.key} cleared`);
+          continue;
+        }
         const error = validateField(v.key, stripped);
         if (error) {
           console.log(`  ❌ Invalid: ${error}`);
