@@ -9,6 +9,28 @@
 
 A Gemini-powered CLI agent that **analyses Solana tokens** and **trades on DEXs** via MCP servers. Talk to it in plain English — it discovers tools on a remote [MCP](https://modelcontextprotocol.io) server ([svm402.com/mcp](https://svm402.com/mcp)) for token analysis (paid via [x402](https://x402.org)), and connects to a local [dex-trader-mcp](https://github.com/dchu3/dex-trader-mcp) server for Jupiter DEX trading.
 
+## Quick Start
+
+Run the one-step installer (requires Node.js 20.18+, npm, and git):
+
+```bash
+curl -sSL https://raw.githubusercontent.com/dchu3/sol-trader-agent/main/setup.sh | bash
+```
+
+This will:
+1. Clone everything to `~/soltrader/`
+2. Walk you through setting up your API keys (Gemini, Solana wallet, optional Telegram)
+3. Optionally install [dex-trader-mcp](https://github.com/dchu3/dex-trader-mcp) for DEX trading
+4. Build and get you ready to go
+
+Then start the agent:
+
+```bash
+cd ~/soltrader/sol-trader-agent && npm start
+```
+
+> **Tip:** Use `/configure` inside the running agent to update your settings at any time.
+
 ## What This Shows
 
 1. **Token Analysis** — Analyse any Solana token via the remote MCP server. Payments are handled automatically via the x402 protocol.
@@ -24,7 +46,9 @@ A Gemini-powered CLI agent that **analyses Solana tokens** and **trades on DEXs*
 - A Solana wallet private key (base58-encoded) funded with SOL and/or USDC
 - (Optional) [dex-trader-mcp](https://github.com/dchu3/dex-trader-mcp) — clone, `npm install && npm run build`, then point `DEX_TRADER_MCP_PATH` at its `dist/index.js`
 
-## Setup
+## Manual Setup
+
+If you prefer to set things up manually (or already cloned the repo):
 
 ```bash
 git clone https://github.com/dchu3/sol-trader-agent.git
@@ -133,10 +157,11 @@ Example prompts:
 > Get a quote for swapping 1 SOL to <token-address>
 > Sell all my <token-name>
 > What's my balance?
+> /configure
 > /quit
 ```
 
-The agent connects to the MCP servers, discovers available tools, and uses Gemini to decide which tools to call based on your input. Token analysis payments are made automatically via x402 — you'll be asked to confirm. Trading actions (buy/sell) also require confirmation. Type `/quit` or press Ctrl+C to exit.
+The agent connects to the MCP servers, discovers available tools, and uses Gemini to decide which tools to call based on your input. Token analysis payments are made automatically via x402 — you'll be asked to confirm. Trading actions (buy/sell) also require confirmation. Type `/configure` to update settings, `/quit` or press Ctrl+C to exit.
 
 ## Architecture
 
