@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as readline from "node:readline/promises";
 import { fileURLToPath } from "node:url";
+import dotenv from "dotenv";
 import { setVerbose } from "./logger.js";
 
 /** Prompt for input (always visible, even for secret fields). */
@@ -98,18 +99,6 @@ interface EnvLine {
   value?: string;
 }
 
-/** Strip matching surrounding quotes (single or double) to match dotenv's parsing. */
-function stripQuotes(value: string): string {
-  if (value.length >= 2) {
-    const first = value[0];
-    const last = value[value.length - 1];
-    if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
-      return value.slice(1, -1);
-    }
-  }
-  return value;
-}
-
 function parseEnvFile(content: string): EnvLine[] {
   const lines: EnvLine[] = [];
   for (const raw of content.split("\n")) {
@@ -122,8 +111,7 @@ function parseEnvFile(content: string): EnvLine[] {
       const eqIdx = raw.indexOf("=");
       if (eqIdx !== -1) {
         const key = raw.slice(0, eqIdx).trim();
-        const value = stripQuotes(raw.slice(eqIdx + 1).trim());
-        lines.push({ type: "assignment", raw, key, value });
+        lines.push({ type: "assignment", raw, key });
       } else {
         lines.push({ type: "comment", raw });
       }
@@ -132,18 +120,11 @@ function parseEnvFile(content: string): EnvLine[] {
   return lines;
 }
 
-/** Read current .env values as a key-value map. */
+/** Read current .env values as a key-value map, using dotenv's parser for consistency. */
 function readCurrentValues(envPath: string): Map<string, string> {
-  const values = new Map<string, string>();
-  if (!fs.existsSync(envPath)) return values;
-
+  if (!fs.existsSync(envPath)) return new Map<string, string>();
   const content = fs.readFileSync(envPath, "utf-8");
-  for (const line of parseEnvFile(content)) {
-    if (line.type === "assignment" && line.key) {
-      values.set(line.key, line.value ?? "");
-    }
-  }
-  return values;
+  return new Map(Object.entries(dotenv.parse(content)));
 }
 
 /** Quote a value for .env if it contains characters that dotenv would misinterpret. */

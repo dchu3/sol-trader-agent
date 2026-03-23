@@ -160,13 +160,18 @@ async function main(): Promise<void> {
             try {
               const prev = config;
               config = reloadConfig();
-              setVerbose(config.verbose);
+              setVerbose(verbose || config.verbose);
 
-              // Connection-level changes still need a restart
+              // Connection-level changes still need a restart to recreate clients
               const needsRestart =
                 prev.remoteMcpUrl !== config.remoteMcpUrl ||
                 prev.solanaPrivateKey !== config.solanaPrivateKey ||
-                prev.dexTraderMcpPath !== config.dexTraderMcpPath;
+                prev.dexTraderMcpPath !== config.dexTraderMcpPath ||
+                prev.solanaRpcUrl !== config.solanaRpcUrl ||
+                prev.jupiterApiBase !== config.jupiterApiBase ||
+                prev.jupiterApiKey !== config.jupiterApiKey ||
+                prev.telegramBotToken !== config.telegramBotToken ||
+                prev.telegramChatId !== config.telegramChatId;
               if (needsRestart) {
                 console.log("  ⚠️  Connection settings changed — restart with /quit && npm start to apply.");
               }

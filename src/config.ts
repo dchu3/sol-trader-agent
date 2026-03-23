@@ -5,8 +5,27 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
-// Load .env into process.env on first import (same as `import "dotenv/config"`)
-dotenv.config();
+/** All env keys managed by the config system. */
+const CONFIG_KEYS = [
+  "GEMINI_API_KEY", "REMOTE_MCP_URL", "SOLANA_PRIVATE_KEY", "GEMINI_MODEL",
+  "SOLANA_RPC_URL", "DEX_TRADER_MCP_PATH", "JUPITER_API_BASE", "JUPITER_API_KEY",
+  "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "VERBOSE",
+] as const;
+
+/** Find the .env file by walking up from the compiled output to the project root. */
+function findEnvPath(): string {
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 5; i++) {
+    if (fs.existsSync(path.join(dir, "package.json"))) {
+      return path.join(dir, ".env");
+    }
+    dir = path.dirname(dir);
+  }
+  return path.join(process.cwd(), ".env");
+}
+
+// Load .env into process.env on first import, using the same path resolution as reloadConfig().
+dotenv.config({ path: findEnvPath() });
 
 export interface Config {
   geminiApiKey: string;
@@ -103,23 +122,15 @@ export function loadConfig(): Config {
   };
 }
 
-/** Find the .env file by walking up from the compiled output to the project root. */
-function findEnvPath(): string {
-  let dir = path.dirname(fileURLToPath(import.meta.url));
-  for (let i = 0; i < 5; i++) {
-    if (fs.existsSync(path.join(dir, "package.json"))) {
-      return path.join(dir, ".env");
-    }
-    dir = path.dirname(dir);
-  }
-  return path.join(process.cwd(), ".env");
-}
-
 /**
  * Re-read .env from disk, update process.env, and return a fresh Config.
- * Use after `/configure` writes changes so the in-memory config stays current.
+ * Clears known config keys from process.env first so that values removed
+ * or commented out in .env don't linger from a previous load.
  */
 export function reloadConfig(): Config {
+  for (const key of CONFIG_KEYS) {
+    delete process.env[key];
+  }
   const envPath = findEnvPath();
   dotenv.config({ path: envPath, override: true });
   return loadConfig();
