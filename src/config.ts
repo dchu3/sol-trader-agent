@@ -126,12 +126,34 @@ export function loadConfig(): Config {
  * Re-read .env from disk, update process.env, and return a fresh Config.
  * Clears known config keys from process.env first so that values removed
  * or commented out in .env don't linger from a previous load.
+ *
+ * This operation is atomic with respect to CONFIG_KEYS: if loading or
+ * validation fails, the previous values for these keys are restored.
  */
 export function reloadConfig(): Config {
+  const previousEnv: Partial<Record<string, string | undefined>> = {};
+  for (const key of CONFIG_KEYS) {
+    previousEnv[key] = process.env[key];
+  }
+
   for (const key of CONFIG_KEYS) {
     delete process.env[key];
   }
+
   const envPath = findEnvPath();
   dotenv.config({ path: envPath });
-  return loadConfig();
+
+  try {
+    return loadConfig();
+  } catch (err) {
+    for (const key of CONFIG_KEYS) {
+      const prev = previousEnv[key];
+      if (prev === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = prev;
+      }
+    }
+    throw err;
+  }
 }
