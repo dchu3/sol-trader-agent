@@ -1,6 +1,31 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import { z } from "zod";
 import bs58 from "bs58";
+import * as path from "node:path";
+import * as fs from "node:fs";
+import { fileURLToPath } from "node:url";
+
+/** All env keys managed by the config system. */
+const CONFIG_KEYS = [
+  "GEMINI_API_KEY", "REMOTE_MCP_URL", "SOLANA_PRIVATE_KEY", "GEMINI_MODEL",
+  "SOLANA_RPC_URL", "DEX_TRADER_MCP_PATH", "JUPITER_API_BASE", "JUPITER_API_KEY",
+  "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "VERBOSE",
+] as const;
+
+/** Find the .env file by walking up from the compiled output to the project root. */
+export function findEnvPath(): string {
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 5; i++) {
+    if (fs.existsSync(path.join(dir, "package.json"))) {
+      return path.join(dir, ".env");
+    }
+    dir = path.dirname(dir);
+  }
+  return path.join(process.cwd(), ".env");
+}
+
+// Load .env into process.env on first import, using the same path resolution as reloadConfig().
+dotenv.config({ path: findEnvPath() });
 
 export interface Config {
   geminiApiKey: string;
@@ -95,4 +120,40 @@ export function loadConfig(): Config {
     telegramChatId: env.TELEGRAM_CHAT_ID !== undefined ? Number(env.TELEGRAM_CHAT_ID) : undefined,
     verbose: env.VERBOSE === "true" || env.VERBOSE === "1",
   };
+}
+
+/**
+ * Re-read .env from disk, update process.env, and return a fresh Config.
+ * Clears known config keys from process.env first so that values removed
+ * or commented out in .env don't linger from a previous load.
+ *
+ * This operation is atomic with respect to CONFIG_KEYS: if loading or
+ * validation fails, the previous values for these keys are restored.
+ */
+export function reloadConfig(): Config {
+  const previousEnv: Partial<Record<string, string | undefined>> = {};
+  for (const key of CONFIG_KEYS) {
+    previousEnv[key] = process.env[key];
+  }
+
+  for (const key of CONFIG_KEYS) {
+    delete process.env[key];
+  }
+
+  const envPath = findEnvPath();
+  dotenv.config({ path: envPath });
+
+  try {
+    return loadConfig();
+  } catch (err) {
+    for (const key of CONFIG_KEYS) {
+      const prev = previousEnv[key];
+      if (prev === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = prev;
+      }
+    }
+    throw err;
+  }
 }

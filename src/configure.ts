@@ -1,8 +1,8 @@
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as readline from "node:readline/promises";
-import { fileURLToPath } from "node:url";
+import dotenv from "dotenv";
 import { setVerbose } from "./logger.js";
+import { findEnvPath } from "./config.js";
 
 /** Prompt for input (always visible, even for secret fields). */
 async function question(rl: readline.Interface, prompt: string): Promise<string> {
@@ -76,20 +76,6 @@ function maskValue(value: string): string {
   return `${value.slice(0, 4)}...${value.slice(-4)}`;
 }
 
-/** Find the .env file path (project root). */
-function findEnvPath(): string {
-  // Walk up from dist/ to find the project root containing package.json
-  let dir = path.dirname(fileURLToPath(import.meta.url));
-  for (let i = 0; i < 5; i++) {
-    if (fs.existsSync(path.join(dir, "package.json"))) {
-      return path.join(dir, ".env");
-    }
-    dir = path.dirname(dir);
-  }
-  // Fallback: current working directory
-  return path.join(process.cwd(), ".env");
-}
-
 /** Parse a .env file into an ordered list of lines (preserving structure). */
 interface EnvLine {
   type: "assignment" | "comment" | "blank";
@@ -110,8 +96,7 @@ function parseEnvFile(content: string): EnvLine[] {
       const eqIdx = raw.indexOf("=");
       if (eqIdx !== -1) {
         const key = raw.slice(0, eqIdx).trim();
-        const value = raw.slice(eqIdx + 1).trim();
-        lines.push({ type: "assignment", raw, key, value });
+        lines.push({ type: "assignment", raw, key });
       } else {
         lines.push({ type: "comment", raw });
       }
@@ -120,18 +105,11 @@ function parseEnvFile(content: string): EnvLine[] {
   return lines;
 }
 
-/** Read current .env values as a key-value map. */
+/** Read current .env values as a key-value map, using dotenv's parser for consistency. */
 function readCurrentValues(envPath: string): Map<string, string> {
-  const values = new Map<string, string>();
-  if (!fs.existsSync(envPath)) return values;
-
+  if (!fs.existsSync(envPath)) return new Map<string, string>();
   const content = fs.readFileSync(envPath, "utf-8");
-  for (const line of parseEnvFile(content)) {
-    if (line.type === "assignment" && line.key) {
-      values.set(line.key, line.value ?? "");
-    }
-  }
-  return values;
+  return new Map(Object.entries(dotenv.parse(content)));
 }
 
 /** Quote a value for .env if it contains characters that dotenv would misinterpret. */
@@ -335,15 +313,6 @@ export async function runConfigure(rl: readline.Interface): Promise<boolean> {
       const verboseEnabled = newVerbose === "true" || newVerbose === "1";
       setVerbose(verboseEnabled);
       console.log(`  ✓ Verbose logging ${verboseEnabled ? "enabled" : "disabled"} (applied immediately)`);
-    }
-
-    // Check if other settings changed that require restart
-    const restartKeys = ENV_VARS.filter((v) => v.key !== "VERBOSE").map((v) => v.key);
-    const needsRestart = restartKeys.some(
-      (key) => (updatedValues.get(key) ?? "") !== (currentValues.get(key) ?? ""),
-    );
-    if (needsRestart) {
-      console.log("  ⚠️  Some changes require a restart to take effect. Use /quit and restart with npm start.");
     }
   } else {
     console.log("\n  No changes made.");
