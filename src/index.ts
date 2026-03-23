@@ -158,14 +158,8 @@ async function main(): Promise<void> {
           const changed = await runConfigure(rl);
           if (changed) {
             try {
-              const prev = config;
+              const prev = { ...config };
               const reloaded = reloadConfig();
-
-              // Always-safe live updates: Gemini API + model + verbosity
-              config.geminiApiKey = reloaded.geminiApiKey;
-              config.geminiModel = reloaded.geminiModel;
-              config.verbose = reloaded.verbose;
-              setVerbose(verbose || reloaded.verbose);
 
               // Connection-level changes still need a restart to recreate clients
               const connectionChanged =
@@ -175,18 +169,29 @@ async function main(): Promise<void> {
                 prev.solanaRpcUrl !== reloaded.solanaRpcUrl ||
                 prev.jupiterApiBase !== reloaded.jupiterApiBase ||
                 prev.jupiterApiKey !== reloaded.jupiterApiKey;
-              const telegramChanged =
-                prev.telegramBotToken !== reloaded.telegramBotToken ||
-                prev.telegramChatId !== reloaded.telegramChatId;
 
-              if (connectionChanged || telegramChanged) {
+              const telegramTokenChanged = prev.telegramBotToken !== reloaded.telegramBotToken;
+
+              // Always-safe live updates: Gemini API + model + verbosity + Telegram Chat ID
+              config.geminiApiKey = reloaded.geminiApiKey;
+              config.geminiModel = reloaded.geminiModel;
+              config.verbose = reloaded.verbose;
+              config.telegramChatId = reloaded.telegramChatId;
+              setVerbose(verbose || reloaded.verbose);
+
+              if (connectionChanged || telegramTokenChanged) {
                 if (connectionChanged) {
-                  console.log("  ⚠️  Connection settings changed — restart with /quit && npm start to apply.");
+                  console.log(
+                    "  ⚠️  Connection settings changed — restart with /quit && npm start to apply.",
+                  );
                 }
-                if (telegramChanged) {
-                  console.log("  ⚠️  Telegram settings changed — restart required. The running bot will NOT apply new auth restrictions until then.");
+                if (telegramTokenChanged) {
+                  console.log(
+                    "  ⚠️  TELEGRAM_BOT_TOKEN changed — restart required to bind to the new token.",
+                  );
                 }
               } else {
+                // No critical changes: apply everything else (e.g. walletAddress update)
                 Object.assign(config, reloaded);
               }
             } catch (err) {
