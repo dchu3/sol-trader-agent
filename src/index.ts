@@ -1,5 +1,6 @@
 import * as readline from "node:readline/promises";
-import { loadConfig } from "./config.js";
+import { loadConfig, reloadConfig } from "./config.js";
+import type { Config } from "./config.js";
 import { createRemoteMcpClient } from "./mcp-client.js";
 import type { McpClient } from "./mcp-client.js";
 import { createLocalMcpClient } from "./local-mcp-client.js";
@@ -37,7 +38,7 @@ funds are spent. Trading actions (buy/sell) also require confirmation.
 async function main(): Promise<void> {
   const verbose =
     process.argv.includes("--verbose") || process.argv.includes("-v");
-  const config = loadConfig();
+  let config: Config = loadConfig();
   setVerbose(verbose || config.verbose);
 
   console.log("Connecting to remote MCP server...");
@@ -154,7 +155,29 @@ async function main(): Promise<void> {
       }
       if (trimmed === "/configure") {
         try {
-          await runConfigure(rl);
+          const changed = await runConfigure(rl);
+          if (changed) {
+            try {
+              const prev = config;
+              config = reloadConfig();
+              setVerbose(config.verbose);
+
+              // Connection-level changes still need a restart
+              const needsRestart =
+                prev.remoteMcpUrl !== config.remoteMcpUrl ||
+                prev.solanaPrivateKey !== config.solanaPrivateKey ||
+                prev.dexTraderMcpPath !== config.dexTraderMcpPath;
+              if (needsRestart) {
+                console.log("  ⚠️  Connection settings changed — restart with /quit && npm start to apply.");
+              }
+            } catch (err) {
+              console.error(
+                "  Warning: could not reload config:",
+                err instanceof Error ? err.message : String(err),
+              );
+              console.error("  The old config will remain active until restart.");
+            }
+          }
         } catch (err) {
           console.error(
             "Configuration error:",

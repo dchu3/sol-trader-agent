@@ -98,6 +98,18 @@ interface EnvLine {
   value?: string;
 }
 
+/** Strip matching surrounding quotes (single or double) to match dotenv's parsing. */
+function stripQuotes(value: string): string {
+  if (value.length >= 2) {
+    const first = value[0];
+    const last = value[value.length - 1];
+    if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+      return value.slice(1, -1);
+    }
+  }
+  return value;
+}
+
 function parseEnvFile(content: string): EnvLine[] {
   const lines: EnvLine[] = [];
   for (const raw of content.split("\n")) {
@@ -110,7 +122,7 @@ function parseEnvFile(content: string): EnvLine[] {
       const eqIdx = raw.indexOf("=");
       if (eqIdx !== -1) {
         const key = raw.slice(0, eqIdx).trim();
-        const value = raw.slice(eqIdx + 1).trim();
+        const value = stripQuotes(raw.slice(eqIdx + 1).trim());
         lines.push({ type: "assignment", raw, key, value });
       } else {
         lines.push({ type: "comment", raw });
@@ -335,15 +347,6 @@ export async function runConfigure(rl: readline.Interface): Promise<boolean> {
       const verboseEnabled = newVerbose === "true" || newVerbose === "1";
       setVerbose(verboseEnabled);
       console.log(`  ✓ Verbose logging ${verboseEnabled ? "enabled" : "disabled"} (applied immediately)`);
-    }
-
-    // Check if other settings changed that require restart
-    const restartKeys = ENV_VARS.filter((v) => v.key !== "VERBOSE").map((v) => v.key);
-    const needsRestart = restartKeys.some(
-      (key) => (updatedValues.get(key) ?? "") !== (currentValues.get(key) ?? ""),
-    );
-    if (needsRestart) {
-      console.log("  ⚠️  Some changes require a restart to take effect. Use /quit and restart with npm start.");
     }
   } else {
     console.log("\n  No changes made.");

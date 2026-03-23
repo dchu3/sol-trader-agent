@@ -1,6 +1,12 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import { z } from "zod";
 import bs58 from "bs58";
+import * as path from "node:path";
+import * as fs from "node:fs";
+import { fileURLToPath } from "node:url";
+
+// Load .env into process.env on first import (same as `import "dotenv/config"`)
+dotenv.config();
 
 export interface Config {
   geminiApiKey: string;
@@ -95,4 +101,26 @@ export function loadConfig(): Config {
     telegramChatId: env.TELEGRAM_CHAT_ID !== undefined ? Number(env.TELEGRAM_CHAT_ID) : undefined,
     verbose: env.VERBOSE === "true" || env.VERBOSE === "1",
   };
+}
+
+/** Find the .env file by walking up from the compiled output to the project root. */
+function findEnvPath(): string {
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 5; i++) {
+    if (fs.existsSync(path.join(dir, "package.json"))) {
+      return path.join(dir, ".env");
+    }
+    dir = path.dirname(dir);
+  }
+  return path.join(process.cwd(), ".env");
+}
+
+/**
+ * Re-read .env from disk, update process.env, and return a fresh Config.
+ * Use after `/configure` writes changes so the in-memory config stays current.
+ */
+export function reloadConfig(): Config {
+  const envPath = findEnvPath();
+  dotenv.config({ path: envPath, override: true });
+  return loadConfig();
 }

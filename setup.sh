@@ -62,6 +62,9 @@ prompt_input() {
     read -r input </dev/tty
   fi
 
+  # Strip carriage returns (from Windows/web pastes) and leading/trailing whitespace
+  input=$(printf '%s' "$input" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
   input="${input:-$default}"
   printf -v "$varname" '%s' "$input"
 }
