@@ -187,7 +187,7 @@ async function main(): Promise<void> {
                   console.log("  ⚠️  Telegram settings changed — restart required. The running bot will NOT apply new auth restrictions until then.");
                 }
               } else {
-                config = reloaded;
+                Object.assign(config, reloaded);
               }
             } catch (err) {
               console.error(
