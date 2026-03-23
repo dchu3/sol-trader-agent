@@ -163,17 +163,21 @@ async function main(): Promise<void> {
               setVerbose(verbose || config.verbose);
 
               // Connection-level changes still need a restart to recreate clients
-              const needsRestart =
+              const connectionChanged =
                 prev.remoteMcpUrl !== config.remoteMcpUrl ||
                 prev.solanaPrivateKey !== config.solanaPrivateKey ||
                 prev.dexTraderMcpPath !== config.dexTraderMcpPath ||
                 prev.solanaRpcUrl !== config.solanaRpcUrl ||
                 prev.jupiterApiBase !== config.jupiterApiBase ||
-                prev.jupiterApiKey !== config.jupiterApiKey ||
+                prev.jupiterApiKey !== config.jupiterApiKey;
+              const telegramChanged =
                 prev.telegramBotToken !== config.telegramBotToken ||
                 prev.telegramChatId !== config.telegramChatId;
-              if (needsRestart) {
+              if (connectionChanged) {
                 console.log("  ⚠️  Connection settings changed — restart with /quit && npm start to apply.");
+              }
+              if (telegramChanged) {
+                console.log("  ⚠️  Telegram settings changed — restart required. The running bot will NOT apply new auth restrictions until then.");
               }
             } catch (err) {
               console.error(

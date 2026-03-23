@@ -1,9 +1,8 @@
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as readline from "node:readline/promises";
-import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 import { setVerbose } from "./logger.js";
+import { findEnvPath } from "./config.js";
 
 /** Prompt for input (always visible, even for secret fields). */
 async function question(rl: readline.Interface, prompt: string): Promise<string> {
@@ -75,20 +74,6 @@ function validateField(key: string, value: string): string | null {
 function maskValue(value: string): string {
   if (value.length <= 10) return "****";
   return `${value.slice(0, 4)}...${value.slice(-4)}`;
-}
-
-/** Find the .env file path (project root). */
-function findEnvPath(): string {
-  // Walk up from dist/ to find the project root containing package.json
-  let dir = path.dirname(fileURLToPath(import.meta.url));
-  for (let i = 0; i < 5; i++) {
-    if (fs.existsSync(path.join(dir, "package.json"))) {
-      return path.join(dir, ".env");
-    }
-    dir = path.dirname(dir);
-  }
-  // Fallback: current working directory
-  return path.join(process.cwd(), ".env");
 }
 
 /** Parse a .env file into an ordered list of lines (preserving structure). */

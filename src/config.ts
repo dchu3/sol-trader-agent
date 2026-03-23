@@ -13,7 +13,7 @@ const CONFIG_KEYS = [
 ] as const;
 
 /** Find the .env file by walking up from the compiled output to the project root. */
-function findEnvPath(): string {
+export function findEnvPath(): string {
   let dir = path.dirname(fileURLToPath(import.meta.url));
   for (let i = 0; i < 5; i++) {
     if (fs.existsSync(path.join(dir, "package.json"))) {
@@ -132,6 +132,6 @@ export function reloadConfig(): Config {
     delete process.env[key];
   }
   const envPath = findEnvPath();
-  dotenv.config({ path: envPath, override: true });
+  dotenv.config({ path: envPath });
   return loadConfig();
 }
