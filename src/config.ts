@@ -5,52 +5,6 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
-/** All env keys managed by the config system. */
-const CONFIG_KEYS = [
-  "GEMINI_API_KEY", "REMOTE_MCP_URL", "SOLANA_PRIVATE_KEY", "GEMINI_MODEL",
-  "SOLANA_RPC_URL", "DEX_TRADER_MCP_PATH", "JUPITER_API_BASE", "JUPITER_API_KEY",
-  "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "VERBOSE",
-] as const;
-
-/** Find the .env file by walking up from the compiled output to the project root. */
-export function findEnvPath(): string {
-  let dir = path.dirname(fileURLToPath(import.meta.url));
-  for (let i = 0; i < 5; i++) {
-    if (fs.existsSync(path.join(dir, "package.json"))) {
-      return path.join(dir, ".env");
-    }
-    dir = path.dirname(dir);
-  }
-  return path.join(process.cwd(), ".env");
-}
-
-// Load .env into process.env on first import, using the same path resolution as reloadConfig().
-dotenv.config({ path: findEnvPath() });
-
-export interface Config {
-  geminiApiKey: string;
-  geminiModel: string;
-  /** URL of the remote MCP server (StreamableHTTP). */
-  remoteMcpUrl: string;
-  /** The user's Solana wallet public address (derived from SOLANA_PRIVATE_KEY). */
-  walletAddress: string;
-  /** Base58-encoded Solana private key (needed for x402 payments to remote MCP). */
-  solanaPrivateKey: string;
-  /** Custom Solana RPC URL. Used by the x402 SDK to avoid public mainnet rate limits. */
-  solanaRpcUrl?: string;
-  /** Path to the dex-trader-mcp dist/index.js entry point (enables local trading tools). */
-  dexTraderMcpPath?: string;
-  /** Jupiter API base URL forwarded to dex-trader-mcp subprocess. */
-  jupiterApiBase?: string;
-  /** Jupiter API key forwarded to dex-trader-mcp subprocess. */
-  jupiterApiKey?: string;
-  /** Telegram bot token from @BotFather. Enables the Telegram interface when set. */
-  telegramBotToken?: string;
-  /** Telegram chat ID of the authorised private user. Only this chat can interact with the bot. */
-  telegramChatId?: number;
-  verbose: boolean;
-}
-
 const EnvSchema = z.object({
   GEMINI_API_KEY: z
     .string({ required_error: "GEMINI_API_KEY environment variable is required" })
@@ -92,6 +46,48 @@ const EnvSchema = z.object({
   NODE_ENV: z.string().optional(),
   VERBOSE: z.string().optional(),
 });
+
+/** All env keys managed by the config system. Derived from the Zod schema. */
+const CONFIG_KEYS = Object.keys(EnvSchema.shape);
+
+/** Find the .env file by walking up from the compiled output to the project root. */
+export function findEnvPath(): string {
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 5; i++) {
+    if (fs.existsSync(path.join(dir, "package.json"))) {
+      return path.join(dir, ".env");
+    }
+    dir = path.dirname(dir);
+  }
+  return path.join(process.cwd(), ".env");
+}
+
+// Load .env into process.env on first import, using the same path resolution as reloadConfig().
+dotenv.config({ path: findEnvPath() });
+
+export interface Config {
+  geminiApiKey: string;
+  geminiModel: string;
+  /** URL of the remote MCP server (StreamableHTTP). */
+  remoteMcpUrl: string;
+  /** The user's Solana wallet public address (derived from SOLANA_PRIVATE_KEY). */
+  walletAddress: string;
+  /** Base58-encoded Solana private key (needed for x402 payments to remote MCP). */
+  solanaPrivateKey: string;
+  /** Custom Solana RPC URL. Used by the x402 SDK to avoid public mainnet rate limits. */
+  solanaRpcUrl?: string;
+  /** Path to the dex-trader-mcp dist/index.js entry point (enables local trading tools). */
+  dexTraderMcpPath?: string;
+  /** Jupiter API base URL forwarded to dex-trader-mcp subprocess. */
+  jupiterApiBase?: string;
+  /** Jupiter API key forwarded to dex-trader-mcp subprocess. */
+  jupiterApiKey?: string;
+  /** Telegram bot token from @BotFather. Enables the Telegram interface when set. */
+  telegramBotToken?: string;
+  /** Telegram chat ID of the authorised private user. Only this chat can interact with the bot. */
+  telegramChatId?: number;
+  verbose: boolean;
+}
 
 export function loadConfig(): Config {
   const env = EnvSchema.parse(process.env);
