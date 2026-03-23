@@ -47,8 +47,8 @@ const EnvSchema = z.object({
   VERBOSE: z.string().optional(),
 });
 
-/** All env keys managed by the config system. Derived from the Zod schema. */
-const CONFIG_KEYS = Object.keys(EnvSchema.shape);
+/** All env keys managed by the config system. Derived from the Zod schema, excluding NODE_ENV. */
+const CONFIG_KEYS = Object.keys(EnvSchema.shape).filter((key) => key !== "NODE_ENV");
 
 /** Find the .env file by walking up from the compiled output to the project root. */
 export function findEnvPath(): string {
