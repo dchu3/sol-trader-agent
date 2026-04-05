@@ -7,8 +7,10 @@ set -euo pipefail
 INSTALL_DIR="$HOME/soltrader"
 AGENT_DIR="$INSTALL_DIR/sol-trader-agent"
 DEX_DIR="$INSTALL_DIR/dex-trader-mcp"
+SCREENER_DIR="$INSTALL_DIR/dex-screener-mcp"
 AGENT_REPO="https://github.com/dchu3/sol-trader-agent.git"
 DEX_REPO="https://github.com/dchu3/dex-trader-mcp.git"
+SCREENER_REPO="https://github.com/dchu3/dex-screener-mcp.git"
 MIN_NODE_MAJOR=20
 MIN_NODE_MINOR=18
 
@@ -322,23 +324,69 @@ if [ "$SETUP_DEX" = "true" ]; then
 
   # Add DEX_TRADER_MCP_PATH to .env if not already there
   DEX_PATH_VALUE="$DEX_DIR/dist/index.js"
+  DEX_PATH_QUOTED=$(quote_env_value "$DEX_PATH_VALUE")
   if grep -q "^DEX_TRADER_MCP_PATH=" "$AGENT_DIR/.env" 2>/dev/null; then
-    sed -i.bak "s|^DEX_TRADER_MCP_PATH=.*|DEX_TRADER_MCP_PATH=${DEX_PATH_VALUE}|" "$AGENT_DIR/.env"
+    sed -i.bak "s|^DEX_TRADER_MCP_PATH=.*|DEX_TRADER_MCP_PATH=${DEX_PATH_QUOTED}|" "$AGENT_DIR/.env"
     rm -f "$AGENT_DIR/.env.bak"
   else
-    printf "\n# Path to dex-trader-mcp (enables Jupiter DEX trading tools)\nDEX_TRADER_MCP_PATH=%s\n" "$DEX_PATH_VALUE" >> "$AGENT_DIR/.env"
+    printf "\n# Path to dex-trader-mcp (enables Jupiter DEX trading tools)\nDEX_TRADER_MCP_PATH=%s\n" "$DEX_PATH_QUOTED" >> "$AGENT_DIR/.env"
   fi
   info "DEX_TRADER_MCP_PATH set in .env"
 
   cd "$AGENT_DIR"
 fi
 
-# ── 6. Build the project ────────────────────────────────────────────
+# ── 6. Optional dex-screener-mcp setup ──────────────────────────────
+step "DexScreener Token Discovery Tools (optional)"
+printf "  dex-screener-mcp enables DexScreener token search and discovery.\n\n"
+
+SETUP_SCREENER=false
+if prompt_yn "Install dex-screener-mcp token discovery tools?"; then
+  SETUP_SCREENER=true
+fi
+
+if [ "$SETUP_SCREENER" = "true" ]; then
+  if [ -d "$SCREENER_DIR/.git" ]; then
+    warn "dex-screener-mcp already exists at $SCREENER_DIR"
+    if prompt_yn "Update it with git pull and rebuild?"; then
+      cd "$SCREENER_DIR"
+      git pull --ff-only || { error "git pull failed — resolve manually."; exit 1; }
+    else
+      info "Skipping — using existing dex-screener-mcp"
+    fi
+  else
+    info "Cloning dex-screener-mcp..."
+    git clone "$SCREENER_REPO" "$SCREENER_DIR"
+    info "Cloned to $SCREENER_DIR"
+  fi
+
+  cd "$SCREENER_DIR"
+  info "Installing dex-screener-mcp dependencies..."
+  npm install --no-fund --no-audit
+  info "Building dex-screener-mcp..."
+  npm run build
+  info "dex-screener-mcp ready"
+
+  # Add DEX_SCREENER_MCP_PATH to .env if not already there
+  SCREENER_PATH_VALUE="$SCREENER_DIR/dist/index.js"
+  SCREENER_PATH_QUOTED=$(quote_env_value "$SCREENER_PATH_VALUE")
+  if grep -q "^DEX_SCREENER_MCP_PATH=" "$AGENT_DIR/.env" 2>/dev/null; then
+    sed -i.bak "s|^DEX_SCREENER_MCP_PATH=.*|DEX_SCREENER_MCP_PATH=${SCREENER_PATH_QUOTED}|" "$AGENT_DIR/.env"
+    rm -f "$AGENT_DIR/.env.bak"
+  else
+    printf "\n# Path to dex-screener-mcp (enables DexScreener token discovery tools)\nDEX_SCREENER_MCP_PATH=%s\n" "$SCREENER_PATH_QUOTED" >> "$AGENT_DIR/.env"
+  fi
+  info "DEX_SCREENER_MCP_PATH set in .env"
+
+  cd "$AGENT_DIR"
+fi
+
+# ── 7. Build the project ────────────────────────────────────────────
 step "Building sol-trader-agent"
 npm run build
 info "Build complete"
 
-# ── 7. Summary ───────────────────────────────────────────────────────
+# ── 8. Summary ───────────────────────────────────────────────────────
 printf "\n"
 printf "%s╔══════════════════════════════════════════════════╗%s\n" "$GREEN" "$RESET"
 printf "%s║          Sol Trader Agent — Ready! 🚀            ║%s\n" "$GREEN" "$RESET"
@@ -349,6 +397,11 @@ if [ "$SETUP_DEX" = "true" ]; then
   printf "  ${BOLD}DEX trading:${RESET}       Enabled (~/soltrader/dex-trader-mcp)\n"
 else
   printf "  ${BOLD}DEX trading:${RESET}       Not installed (re-run setup to add later)\n"
+fi
+if [ "$SETUP_SCREENER" = "true" ]; then
+  printf "  ${BOLD}DexScreener:${RESET}       Enabled (~/soltrader/dex-screener-mcp)\n"
+else
+  printf "  ${BOLD}DexScreener:${RESET}       Not installed (re-run setup to add later)\n"
 fi
 if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
   printf "  ${BOLD}Telegram bot:${RESET}      Configured\n"

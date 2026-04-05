@@ -27,16 +27,29 @@ export interface ToolRouter {
 }
 
 /**
- * Build a ToolRouter that merges tools from a remote MCP client and an
- * optional local MCP client, routing calls to the correct backend.
+ * Build a ToolRouter that merges tools from a remote MCP client and zero or
+ * more local MCP clients, routing calls to the correct backend.
  */
 export function createToolRouter(
   remoteMcpClient: McpClient,
-  localMcpClient?: LocalMcpClient,
+  localMcpClients: LocalMcpClient[] = [],
 ): ToolRouter {
-  const localToolNames = new Set(
-    localMcpClient?.tools.map((t) => t.name) ?? [],
-  );
+  // Map each tool name → the local client that owns it
+  const localToolOwner = new Map<string, LocalMcpClient>();
+  const localToolNames = new Set<string>();
+
+  for (const client of localMcpClients) {
+    for (const tool of client.tools) {
+      if (localToolNames.has(tool.name)) {
+        throw new Error(
+          `Tool name collision between local MCP servers: ${tool.name}. ` +
+            "Each tool name must be unique across all connected MCP servers.",
+        );
+      }
+      localToolNames.add(tool.name);
+      localToolOwner.set(tool.name, client);
+    }
+  }
 
   const remoteToolNames = new Set(remoteMcpClient.tools.map((t) => t.name));
   const collisions = [...localToolNames].filter((n) => remoteToolNames.has(n));
@@ -49,15 +62,16 @@ export function createToolRouter(
 
   const allTools: Tool[] = [
     ...remoteMcpClient.tools,
-    ...(localMcpClient?.tools ?? []),
+    ...localMcpClients.flatMap((c) => c.tools),
   ];
 
   return {
     tools: allTools,
 
     async callTool(name, args, options) {
-      if (localToolNames.has(name) && localMcpClient) {
-        return localMcpClient.callTool(name, args);
+      const localClient = localToolOwner.get(name);
+      if (localClient) {
+        return localClient.callTool(name, args);
       }
       return remoteMcpClient.callTool(name, args, options);
     },
@@ -106,6 +120,29 @@ const SYSTEM_INSTRUCTION = (walletAddress: string, toolNames: string[], channel:
   if (toolSet.has("get_balance"))
     capabilities.push("- Check wallet SOL balance and token balances (get_balance)");
 
+  if (toolSet.has("search_pairs"))
+    capabilities.push(
+      "- Search for token pairs on DexScreener by name, symbol, or address (search_pairs)",
+    );
+  if (toolSet.has("get_latest_token_profiles"))
+    capabilities.push("- Get the latest token profiles from DexScreener (get_latest_token_profiles)");
+  if (toolSet.has("get_latest_boosted_tokens"))
+    capabilities.push("- Get the latest boosted tokens on DexScreener (get_latest_boosted_tokens)");
+  if (toolSet.has("get_top_boosted_tokens"))
+    capabilities.push("- Get the most actively boosted tokens on DexScreener (get_top_boosted_tokens)");
+  if (toolSet.has("get_token_pools"))
+    capabilities.push("- Get pools/pairs for a token on a specific chain (get_token_pools)");
+  if (toolSet.has("get_tokens_by_address"))
+    capabilities.push("- Look up token data by address on a specific chain (get_tokens_by_address)");
+  if (toolSet.has("get_pairs_by_chain_and_pair"))
+    capabilities.push("- Get pair data by chain and pair address (get_pairs_by_chain_and_pair)");
+  if (toolSet.has("get_token_orders"))
+    capabilities.push("- Check paid orders for a token on DexScreener (get_token_orders)");
+  if (toolSet.has("get_latest_community_takeovers"))
+    capabilities.push("- Get the latest community takeover tokens on DexScreener (get_latest_community_takeovers)");
+  if (toolSet.has("get_latest_ads"))
+    capabilities.push("- Get the latest promoted/advertised tokens on DexScreener (get_latest_ads)");
+
   // Fallback for unknown tools
   const knownTools = new Set([
     "get_usdc_balance",
@@ -120,6 +157,17 @@ const SYSTEM_INSTRUCTION = (walletAddress: string, toolNames: string[], channel:
     "sell_token",
     "buy_and_sell",
     "get_balance",
+    // dex-screener-mcp tools
+    "search_pairs",
+    "get_latest_token_profiles",
+    "get_latest_boosted_tokens",
+    "get_top_boosted_tokens",
+    "get_token_pools",
+    "get_tokens_by_address",
+    "get_pairs_by_chain_and_pair",
+    "get_token_orders",
+    "get_latest_community_takeovers",
+    "get_latest_ads",
   ]);
   const unknownTools = toolNames.filter((t) => !knownTools.has(t));
   if (unknownTools.length > 0) {
@@ -149,6 +197,17 @@ const READ_ONLY_TOOLS = new Set([
   "get_incoming_usdc_payments",
   "get_quote",
   "get_balance",
+  // dex-screener-mcp tools (all read-only, public DexScreener API)
+  "search_pairs",
+  "get_latest_token_profiles",
+  "get_latest_boosted_tokens",
+  "get_top_boosted_tokens",
+  "get_token_pools",
+  "get_tokens_by_address",
+  "get_pairs_by_chain_and_pair",
+  "get_token_orders",
+  "get_latest_community_takeovers",
+  "get_latest_ads",
 ]);
 
 /**
