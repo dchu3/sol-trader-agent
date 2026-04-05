@@ -8,7 +8,7 @@ services:
       # Uncomment and adjust paths to use local MCP servers in Docker:
       # - /path/to/dex-trader-mcp:/opt/dex-trader-mcp:ro
       # - /path/to/dex-screener-mcp:/opt/dex-screener-mcp:ro
-    environment:
-      # Uncomment to override host-path MCP paths with container equivalents:
-      # - DEX_TRADER_MCP_PATH=/opt/dex-trader-mcp/dist/index.js
-      # - DEX_SCREENER_MCP_PATH=/opt/dex-screener-mcp/dist/index.js
+    # Uncomment environment to override host-path MCP paths with container equivalents:
+    # environment:
+    #   - DEX_TRADER_MCP_PATH=/opt/dex-trader-mcp/dist/index.js
+    #   - DEX_SCREENER_MCP_PATH=/opt/dex-screener-mcp/dist/index.js
