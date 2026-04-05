@@ -42,7 +42,14 @@ User (readline) → index.ts → agent.ts → Gemini API
 
 ## Git Workflow
 
-Never push directly to `main`. Always create a feature or fix branch (e.g., `feat/my-feature`, `fix/my-bug`) and open a pull request.
+**Never commit or push directly to `main`.** This is a hard rule with no exceptions — even for "quick fixes", typos, or single-line changes.
+
+Always:
+1. Create a feature or fix branch (e.g., `feat/my-feature`, `fix/my-bug`).
+2. Commit all changes to that branch.
+3. Push the branch and open a pull request.
+
+Before committing, verify which branch you are on with `git branch --show-current`. If it returns `main`, **stop** and create a new branch first.
 
 ## Required Environment Variables
 
