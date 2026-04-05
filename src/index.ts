@@ -77,6 +77,7 @@ async function main(): Promise<void> {
   if (config.dexScreenerMcpPath) {
     console.log("Connecting to local dex-screener-mcp server...");
     try {
+      // Empty env: dex-screener-mcp is a stateless public API wrapper, no secrets needed
       screenerClient = await createLocalMcpClient(config.dexScreenerMcpPath, {});
       const screenerToolNames = screenerClient.tools.map((t) => t.name).join(", ");
       console.log(`Local dex-screener-mcp connected. Tools: ${screenerToolNames}`);
@@ -93,7 +94,16 @@ async function main(): Promise<void> {
   if (localClient) localClients.push(localClient);
   if (screenerClient) localClients.push(screenerClient);
 
-  const router = createToolRouter(mcpClient, localClients);
+  let router;
+  try {
+    router = createToolRouter(mcpClient, localClients);
+  } catch (err) {
+    // Clean up spawned subprocesses before re-throwing
+    for (const client of localClients) {
+      await client.close().catch(() => {});
+    }
+    throw err;
+  }
   const allToolNames = router.tools.map((t) => t.name).join(", ");
   console.log(`All available tools: ${allToolNames}`);
   console.log(`Using model: ${config.geminiModel}`);

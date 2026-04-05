@@ -138,6 +138,10 @@ const SYSTEM_INSTRUCTION = (walletAddress: string, toolNames: string[], channel:
     capabilities.push("- Get pair data by chain and pair address (get_pairs_by_chain_and_pair)");
   if (toolSet.has("get_token_orders"))
     capabilities.push("- Check paid orders for a token on DexScreener (get_token_orders)");
+  if (toolSet.has("get_latest_community_takeovers"))
+    capabilities.push("- Get the latest community takeover tokens on DexScreener (get_latest_community_takeovers)");
+  if (toolSet.has("get_latest_ads"))
+    capabilities.push("- Get the latest promoted/advertised tokens on DexScreener (get_latest_ads)");
 
   // Fallback for unknown tools
   const knownTools = new Set([

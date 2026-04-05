@@ -324,11 +324,12 @@ if [ "$SETUP_DEX" = "true" ]; then
 
   # Add DEX_TRADER_MCP_PATH to .env if not already there
   DEX_PATH_VALUE="$DEX_DIR/dist/index.js"
+  DEX_PATH_QUOTED=$(quote_env_value "$DEX_PATH_VALUE")
   if grep -q "^DEX_TRADER_MCP_PATH=" "$AGENT_DIR/.env" 2>/dev/null; then
-    sed -i.bak "s|^DEX_TRADER_MCP_PATH=.*|DEX_TRADER_MCP_PATH=${DEX_PATH_VALUE}|" "$AGENT_DIR/.env"
+    sed -i.bak "s|^DEX_TRADER_MCP_PATH=.*|DEX_TRADER_MCP_PATH=${DEX_PATH_QUOTED}|" "$AGENT_DIR/.env"
     rm -f "$AGENT_DIR/.env.bak"
   else
-    printf "\n# Path to dex-trader-mcp (enables Jupiter DEX trading tools)\nDEX_TRADER_MCP_PATH=%s\n" "$DEX_PATH_VALUE" >> "$AGENT_DIR/.env"
+    printf "\n# Path to dex-trader-mcp (enables Jupiter DEX trading tools)\nDEX_TRADER_MCP_PATH=%s\n" "$DEX_PATH_QUOTED" >> "$AGENT_DIR/.env"
   fi
   info "DEX_TRADER_MCP_PATH set in .env"
 
@@ -368,11 +369,12 @@ if [ "$SETUP_SCREENER" = "true" ]; then
 
   # Add DEX_SCREENER_MCP_PATH to .env if not already there
   SCREENER_PATH_VALUE="$SCREENER_DIR/dist/index.js"
+  SCREENER_PATH_QUOTED=$(quote_env_value "$SCREENER_PATH_VALUE")
   if grep -q "^DEX_SCREENER_MCP_PATH=" "$AGENT_DIR/.env" 2>/dev/null; then
-    sed -i.bak "s|^DEX_SCREENER_MCP_PATH=.*|DEX_SCREENER_MCP_PATH=${SCREENER_PATH_VALUE}|" "$AGENT_DIR/.env"
+    sed -i.bak "s|^DEX_SCREENER_MCP_PATH=.*|DEX_SCREENER_MCP_PATH=${SCREENER_PATH_QUOTED}|" "$AGENT_DIR/.env"
     rm -f "$AGENT_DIR/.env.bak"
   else
-    printf "\n# Path to dex-screener-mcp (enables DexScreener token discovery tools)\nDEX_SCREENER_MCP_PATH=%s\n" "$SCREENER_PATH_VALUE" >> "$AGENT_DIR/.env"
+    printf "\n# Path to dex-screener-mcp (enables DexScreener token discovery tools)\nDEX_SCREENER_MCP_PATH=%s\n" "$SCREENER_PATH_QUOTED" >> "$AGENT_DIR/.env"
   fi
   info "DEX_SCREENER_MCP_PATH set in .env"
 
