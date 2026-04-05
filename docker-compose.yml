@@ -6,6 +6,8 @@ services:
     volumes:
       - ./.env:/app/.env:ro
       - /home/derekchudley/projects/dex-trader-mcp:/opt/dex-trader-mcp:ro
+      - /home/derekchudley/projects/dex-screener-mcp:/opt/dex-screener-mcp:ro
     environment:
       # Override host-path DEX_TRADER_MCP_PATH with the container-path equivalent
       - DEX_TRADER_MCP_PATH=/opt/dex-trader-mcp/dist/index.js
+      - DEX_SCREENER_MCP_PATH=/opt/dex-screener-mcp/dist/index.js

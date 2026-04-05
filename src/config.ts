@@ -33,6 +33,7 @@ const EnvSchema = z.object({
   GEMINI_MODEL: z.string().optional(),
   SOLANA_RPC_URL: z.string().optional(),
   DEX_TRADER_MCP_PATH: z.string().optional(),
+  DEX_SCREENER_MCP_PATH: z.string().optional(),
   JUPITER_API_BASE: z.string().optional(),
   JUPITER_API_KEY: z.string().optional(),
   TELEGRAM_BOT_TOKEN: z.string().optional(),
@@ -78,6 +79,8 @@ export interface Config {
   solanaRpcUrl?: string;
   /** Path to the dex-trader-mcp dist/index.js entry point (enables local trading tools). */
   dexTraderMcpPath?: string;
+  /** Path to the dex-screener-mcp dist/index.js entry point (enables DexScreener token discovery tools). */
+  dexScreenerMcpPath?: string;
   /** Jupiter API base URL forwarded to dex-trader-mcp subprocess. */
   jupiterApiBase?: string;
   /** Jupiter API key forwarded to dex-trader-mcp subprocess. */
@@ -110,6 +113,7 @@ export function loadConfig(): Config {
     solanaPrivateKey: env.SOLANA_PRIVATE_KEY,
     solanaRpcUrl: env.SOLANA_RPC_URL,
     dexTraderMcpPath: env.DEX_TRADER_MCP_PATH,
+    dexScreenerMcpPath: env.DEX_SCREENER_MCP_PATH,
     jupiterApiBase: env.JUPITER_API_BASE,
     jupiterApiKey: env.JUPITER_API_KEY,
     telegramBotToken: env.TELEGRAM_BOT_TOKEN,
