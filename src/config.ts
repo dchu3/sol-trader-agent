@@ -34,6 +34,8 @@ const EnvSchema = z.object({
   SOLANA_RPC_URL: z.string().optional(),
   DEX_TRADER_MCP_PATH: z.string().optional(),
   DEX_SCREENER_MCP_PATH: z.string().optional(),
+  DEX_RUGCHECK_MCP_PATH: z.string().optional(),
+  SOLANA_RPC_MCP_PATH: z.string().optional(),
   JUPITER_API_BASE: z.string().optional(),
   JUPITER_API_KEY: z.string().optional(),
   TELEGRAM_BOT_TOKEN: z.string().optional(),
@@ -81,6 +83,10 @@ export interface Config {
   dexTraderMcpPath?: string;
   /** Path to the dex-screener-mcp dist/index.js entry point (enables DexScreener token discovery tools). */
   dexScreenerMcpPath?: string;
+  /** Path to the dex-rugcheck-mcp dist/index.js entry point (enables RugCheck token safety analysis). */
+  dexRugcheckMcpPath?: string;
+  /** Path to the solana-rpc-mcp dist/index.js entry point (enables direct Solana RPC blockchain queries). */
+  solanaRpcMcpPath?: string;
   /** Jupiter API base URL forwarded to dex-trader-mcp subprocess. */
   jupiterApiBase?: string;
   /** Jupiter API key forwarded to dex-trader-mcp subprocess. */
@@ -114,6 +120,8 @@ export function loadConfig(): Config {
     solanaRpcUrl: env.SOLANA_RPC_URL,
     dexTraderMcpPath: env.DEX_TRADER_MCP_PATH,
     dexScreenerMcpPath: env.DEX_SCREENER_MCP_PATH,
+    dexRugcheckMcpPath: env.DEX_RUGCHECK_MCP_PATH,
+    solanaRpcMcpPath: env.SOLANA_RPC_MCP_PATH,
     jupiterApiBase: env.JUPITER_API_BASE,
     jupiterApiKey: env.JUPITER_API_KEY,
     telegramBotToken: env.TELEGRAM_BOT_TOKEN,
