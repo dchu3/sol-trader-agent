@@ -9,6 +9,23 @@
 
 A Gemini-powered CLI agent that **analyses Solana tokens** and **trades on DEXs** via MCP servers. Talk to it in plain English — it discovers tools on a remote [MCP](https://modelcontextprotocol.io) server ([svm402.com/mcp](https://svm402.com/mcp)) for token analysis (paid via [x402](https://x402.org)), connects to local MCP servers for Jupiter DEX trading ([dex-trader-mcp](https://github.com/dchu3/dex-trader-mcp)), token discovery via DexScreener ([dex-screener-mcp](https://github.com/dchu3/dex-screener-mcp)), rug-pull safety checks ([dex-rugcheck-mcp](https://github.com/dchu3/dex-rugcheck-mcp)), and direct Solana blockchain queries ([solana-rpc-mcp](https://github.com/dchu3/solana-rpc-mcp)).
 
+## ⚠️ Important Disclaimer & Consent
+
+**Sol Trader Agent** is a **research and trading assistance tool** that helps you gather on-chain data, AI-generated analysis, and execute trades on Solana DEXs. It is designed to support your own due diligence (DYOR).
+
+**This is NOT financial advice, investment advice, or a recommendation to buy, sell, or hold any token.**
+
+- AI analysis can contain errors, miss risks, or become outdated quickly.
+- Cryptocurrency is highly speculative — you can lose 100% of your investment.
+- Always verify everything yourself using multiple sources (DexScreener, Solscan, RugCheck, Birdeye, etc.).
+- **Use only a dedicated burner wallet** with a small amount of funds — never use a wallet that holds significant assets.
+- Paid analysis calls ($0.10 USDC per call via x402) help cover AI and hosting costs so the remote analysis service can remain available.
+
+By installing and using this software, you acknowledge that you are solely responsible for your own trading decisions and any resulting losses.
+
+> [!CAUTION]
+> **Never share your private key with anyone.** Your `SOLANA_PRIVATE_KEY` grants full control over your wallet — anyone with it can transfer all your funds. Never commit it to source control, paste it in chat, or store it in plain text files. We strongly recommend creating a **dedicated low-balance wallet** (see [Creating a Dedicated Wallet](#creating-a-dedicated-wallet-recommended)) rather than using a wallet that holds significant funds.
+
 ## Quick Start
 
 Run the one-step installer (requires Node.js 20.18+, npm, and git):
@@ -132,6 +149,78 @@ Edit `.env` with your values:
 - `TELEGRAM_BOT_TOKEN` (optional): Telegram bot token from [@BotFather](https://t.me/BotFather). Enables the Telegram interface when set.
 - `TELEGRAM_CHAT_ID` (optional): Telegram chat ID of the authorised user. When set, the bot only responds to this chat. To find your chat ID, message [@userinfobot](https://t.me/userinfobot) on Telegram.
 - `VERBOSE` (optional): Set to `true` or `1` to enable debug logging
+
+## Creating a Dedicated Wallet (Recommended)
+
+For safety, create a separate Solana wallet just for this agent. Only fund it with a small amount — enough to cover your analysis calls and trades.
+
+### 1. Install the Solana CLI
+
+```bash
+sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+```
+
+After installation, restart your terminal or run the `export PATH` command shown in the installer output.
+
+### 2. Generate a New Keypair
+
+```bash
+solana-keygen new --outfile ~/.config/solana/sol-trader.json
+```
+
+This creates a new wallet and displays the public key (wallet address). **Save the seed phrase** shown during generation — it's your only backup.
+
+### 3. Get Your Base58 Private Key
+
+The keypair file is a JSON array of bytes. To convert it to the base58 format needed by this agent, run this command (no extra packages required):
+
+```bash
+node -e "
+const bytes = new Uint8Array(JSON.parse(require('fs').readFileSync(process.env.HOME + '/.config/solana/sol-trader.json', 'utf8')));
+const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+let num = BigInt('0x' + Buffer.from(bytes).toString('hex')), result = '';
+while (num > 0n) { result = alphabet[Number(num % 58n)] + result; num /= 58n; }
+for (const b of bytes) { if (b === 0) result = '1' + result; else break; }
+console.log(result);
+"
+```
+
+The output is your `SOLANA_PRIVATE_KEY` — use this value in your `.env` file.
+
+### 4. Fund the Wallet
+
+Send **USDC** and/or **SOL** to your new wallet address:
+
+- **USDC** — needed for paid token analysis ($0.10 per call). $1–$5 is enough to get started.
+- **SOL** — needed if you want to trade tokens via Jupiter (buy/sell). The amount depends on your trading needs.
+
+You do **not** need SOL for analysis calls — transaction fees for x402 payments are sponsored by the server.
+
+> [!TIP]
+> You can check your wallet address anytime with:
+> ```bash
+> solana-keygen pubkey ~/.config/solana/sol-trader.json
+> ```
+
+### 5. Verify on a Block Explorer
+
+After funding, confirm the funds arrived by checking your wallet address on a block explorer:
+
+- **Solscan:** `https://solscan.io/account/<YOUR_WALLET_ADDRESS>`
+- **Solana Explorer:** `https://explorer.solana.com/address/<YOUR_WALLET_ADDRESS>`
+
+Replace `<YOUR_WALLET_ADDRESS>` with the public key from the previous step.
+
+### 6. (Optional) Import into a Wallet App
+
+You can import this wallet into **Phantom**, **Solflare**, or another Solana wallet app to manage funds with a UI (send USDC/SOL, check balances, etc.).
+
+> [!IMPORTANT]
+> Import using the **private key** — not the seed phrase. Wallet apps like Phantom use a different key derivation method (BIP-44) than `solana-keygen`, so the same seed phrase will produce a **different address**. The private key import always gives you the correct wallet.
+
+1. Open your wallet app → **Settings** → **Import Private Key** (or "Import Wallet")
+2. Paste the base58 private key from [Step 3](#3-get-your-base58-private-key)
+3. Verify the address shown matches your `solana-keygen pubkey` output
 
 ## Usage
 
