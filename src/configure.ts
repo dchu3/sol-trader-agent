@@ -25,6 +25,8 @@ const ENV_VARS: EnvVar[] = [
   { key: "SOLANA_RPC_URL", label: "Solana RPC URL", required: false, secret: false },
   { key: "DEX_TRADER_MCP_PATH", label: "dex-trader-mcp path", required: false, secret: false },
   { key: "DEX_SCREENER_MCP_PATH", label: "dex-screener-mcp path", required: false, secret: false },
+  { key: "DEX_RUGCHECK_MCP_PATH", label: "dex-rugcheck-mcp path", required: false, secret: false },
+  { key: "SOLANA_RPC_MCP_PATH", label: "solana-rpc-mcp path", required: false, secret: false },
   { key: "JUPITER_API_BASE", label: "Jupiter API base URL", required: false, secret: false },
   { key: "JUPITER_API_KEY", label: "Jupiter API key", required: false, secret: true },
   { key: "TELEGRAM_BOT_TOKEN", label: "Telegram bot token", required: false, secret: true },

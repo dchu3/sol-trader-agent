@@ -7,7 +7,7 @@
 >
 > **Use at your own risk.** The authors and contributors accept no liability for any losses or damages arising from the use of this software. You are solely responsible for your own trading decisions and wallet security.
 
-A Gemini-powered CLI agent that **analyses Solana tokens** and **trades on DEXs** via MCP servers. Talk to it in plain English — it discovers tools on a remote [MCP](https://modelcontextprotocol.io) server ([svm402.com/mcp](https://svm402.com/mcp)) for token analysis (paid via [x402](https://x402.org)), connects to a local [dex-trader-mcp](https://github.com/dchu3/dex-trader-mcp) server for Jupiter DEX trading, and uses [dex-screener-mcp](https://github.com/dchu3/dex-screener-mcp) for token discovery and market data via the DexScreener API.
+A Gemini-powered CLI agent that **analyses Solana tokens** and **trades on DEXs** via MCP servers. Talk to it in plain English — it discovers tools on a remote [MCP](https://modelcontextprotocol.io) server ([svm402.com/mcp](https://svm402.com/mcp)) for token analysis (paid via [x402](https://x402.org)), connects to local MCP servers for Jupiter DEX trading ([dex-trader-mcp](https://github.com/dchu3/dex-trader-mcp)), token discovery via DexScreener ([dex-screener-mcp](https://github.com/dchu3/dex-screener-mcp)), rug-pull safety checks ([dex-rugcheck-mcp](https://github.com/dchu3/dex-rugcheck-mcp)), and direct Solana blockchain queries ([solana-rpc-mcp](https://github.com/dchu3/solana-rpc-mcp)).
 
 ## Quick Start
 
@@ -22,7 +22,9 @@ This will:
 2. Walk you through setting up your API keys (Gemini, Solana wallet, optional Telegram)
 3. Optionally install [dex-trader-mcp](https://github.com/dchu3/dex-trader-mcp) for DEX trading
 4. Optionally install [dex-screener-mcp](https://github.com/dchu3/dex-screener-mcp) for token discovery
-5. Build and get you ready to go
+5. Optionally install [dex-rugcheck-mcp](https://github.com/dchu3/dex-rugcheck-mcp) for token safety analysis
+6. Optionally install [solana-rpc-mcp](https://github.com/dchu3/solana-rpc-mcp) for direct blockchain queries
+7. Build and get you ready to go
 
 > **Note:** API keys and secrets are displayed as you type/paste them during setup so you can verify correctness. Run the installer in a private terminal session.
 
@@ -37,10 +39,13 @@ cd ~/soltrader/sol-trader-agent && npm start
 ## What This Shows
 
 1. **Token Discovery** — Search for tokens, find trending/boosted tokens, and look up market data via DexScreener.
-2. **Token Analysis** — Analyse any Solana token via the remote MCP server. Payments are handled automatically via the x402 protocol.
-3. **DEX Trading** — Buy and sell tokens using Jupiter aggregator for best prices across all Solana DEXs.
-4. **Multi-MCP Architecture** — The agent connects to multiple MCP servers (remote HTTP + local stdio) and merges their tools into a single unified interface.
-5. **Confirmation Before Acting** — All paid and destructive tool calls require user confirmation.
+2. **Token Safety** — Check rug-pull risk, contract analysis, and liquidity assessment via RugCheck.
+3. **On-Chain Data** — Query token supply, top holders, transaction history, and account info directly from Solana RPC.
+4. **Token Analysis** — Analyse any Solana token via the remote MCP server. Payments are handled automatically via the x402 protocol.
+5. **DEX Trading** — Buy and sell tokens using Jupiter aggregator for best prices across all Solana DEXs.
+6. **Smart Workflow** — The agent gathers free data (DexScreener, RugCheck, on-chain) before suggesting the paid svm402 analysis.
+7. **Multi-MCP Architecture** — The agent connects to multiple MCP servers (remote HTTP + local stdio) and merges their tools into a single unified interface.
+8. **Confirmation Before Acting** — All paid and destructive tool calls require user confirmation.
 
 ## Prerequisites
 
@@ -50,6 +55,8 @@ cd ~/soltrader/sol-trader-agent && npm start
 - A Solana wallet private key (base58-encoded) funded with SOL and/or USDC
 - (Optional) [dex-trader-mcp](https://github.com/dchu3/dex-trader-mcp) — clone, `npm install && npm run build`, then point `DEX_TRADER_MCP_PATH` at its `dist/index.js`
 - (Optional) [dex-screener-mcp](https://github.com/dchu3/dex-screener-mcp) — clone, `npm install && npm run build`, then point `DEX_SCREENER_MCP_PATH` at its `dist/index.js`
+- (Optional) [dex-rugcheck-mcp](https://github.com/dchu3/dex-rugcheck-mcp) — clone, `npm install && npm run build`, then point `DEX_RUGCHECK_MCP_PATH` at its `dist/index.js`
+- (Optional) [solana-rpc-mcp](https://github.com/dchu3/solana-rpc-mcp) — clone, `npm install && npm run build`, then point `SOLANA_RPC_MCP_PATH` at its `dist/index.js`
 
 ## Manual Setup
 
@@ -85,6 +92,28 @@ npm run build
 
 Then set `DEX_SCREENER_MCP_PATH` in your `.env` to the absolute path of `dex-screener-mcp/dist/index.js`.
 
+### Setting up dex-rugcheck-mcp (optional)
+
+```bash
+git clone https://github.com/dchu3/dex-rugcheck-mcp.git
+cd dex-rugcheck-mcp
+npm install
+npm run build
+```
+
+Then set `DEX_RUGCHECK_MCP_PATH` in your `.env` to the absolute path of `dex-rugcheck-mcp/dist/index.js`.
+
+### Setting up solana-rpc-mcp (optional)
+
+```bash
+git clone https://github.com/dchu3/solana-rpc-mcp.git
+cd solana-rpc-mcp
+npm install
+npm run build
+```
+
+Then set `SOLANA_RPC_MCP_PATH` in your `.env` to the absolute path of `solana-rpc-mcp/dist/index.js`.
+
 ## Configuration
 
 Edit `.env` with your values:
@@ -96,6 +125,8 @@ Edit `.env` with your values:
 - `SOLANA_RPC_URL` (optional): Custom Solana RPC endpoint (avoids public rate limits)
 - `DEX_TRADER_MCP_PATH` (optional): Path to `dex-trader-mcp/dist/index.js` (enables trading tools)
 - `DEX_SCREENER_MCP_PATH` (optional): Path to `dex-screener-mcp/dist/index.js` (enables DexScreener token discovery tools)
+- `DEX_RUGCHECK_MCP_PATH` (optional): Path to `dex-rugcheck-mcp/dist/index.js` (enables RugCheck token safety analysis)
+- `SOLANA_RPC_MCP_PATH` (optional): Path to `solana-rpc-mcp/dist/index.js` (enables direct Solana RPC blockchain queries)
 - `JUPITER_API_BASE` (optional): Jupiter API base URL (forwarded to dex-trader-mcp)
 - `JUPITER_API_KEY` (optional): Jupiter API key (forwarded to dex-trader-mcp)
 - `TELEGRAM_BOT_TOKEN` (optional): Telegram bot token from [@BotFather](https://t.me/BotFather). Enables the Telegram interface when set.
@@ -146,7 +177,7 @@ docker build -t sol-trader-agent .
 docker run -it --env-file .env sol-trader-agent
 ```
 
-To use dex-trader-mcp or dex-screener-mcp inside Docker, uncomment the volume mounts in `docker-compose.yml` and set `DEX_TRADER_MCP_PATH` / `DEX_SCREENER_MCP_PATH` in your `.env`.
+To use local MCP servers inside Docker, uncomment/add the volume mounts in `docker-compose.yml` and set the corresponding path environment variables. The compose file includes volume mounts for dex-screener-mcp, dex-rugcheck-mcp, and solana-rpc-mcp by default.
 
 ```bash
 npm start
@@ -177,6 +208,9 @@ Example prompts:
 > Search for SOL/USDC pairs on DexScreener
 > What are the top boosted tokens right now?
 > Find the token BONK on Solana and analyse it
+> Is this token safe? <mint-address>
+> What are the top holders of <token-address>?
+> What's the total supply of <token-address>?
 > /configure
 > /quit
 ```
@@ -196,16 +230,25 @@ The agent connects to the MCP servers, discovers available tools, and uses Gemin
                                │              Sign USDC payment
                           stdio │              (x402 SDK + Solana)
                                │
-                    ┌──────────┼──────────┐
-                    │                     │
-             ┌──────▼──────┐       ┌──────▼──────┐
-             │ dex-trader  │       │dex-screener │
-             │ MCP server  │       │ MCP server  │
-             │  (local)    │       │  (local)    │
-             └──────┬──────┘       └──────┬──────┘
-                    │                     │
-               Jupiter API         DexScreener API
-              (DEX trading)       (token discovery)
+              ┌────────┬───────┼───────┬────────┐
+              │        │               │        │
+       ┌──────▼──────┐ │ ┌──────▼──────┐ │ ┌──────▼──────┐
+       │ dex-trader  │ │ │dex-screener │ │ │dex-rugcheck │
+       │ MCP server  │ │ │ MCP server  │ │ │ MCP server  │
+       │  (local)    │ │ │  (local)    │ │ │  (local)    │
+       └──────┬──────┘ │ └──────┬──────┘ │ └──────┬──────┘
+              │        │        │        │        │
+          Jupiter API  │  DexScreener   │   RugCheck API
+         (DEX trading) │     API        │  (token safety)
+                       │                │
+                ┌──────▼──────┐         │
+                │ solana-rpc  │         │
+                │ MCP server  │         │
+                │  (local)    │         │
+                └──────┬──────┘         │
+                       │                │
+                  Solana RPC            │
+              (on-chain queries)        │
 ```
 
 - **`src/index.ts`** — Interactive readline CLI entrypoint; orchestrates both CLI and Telegram interfaces

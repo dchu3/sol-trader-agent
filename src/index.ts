@@ -15,15 +15,20 @@ function printHelp(): void {
   console.log(`
 Sol Trader Agent — analyse tokens and trade on Solana DEXs.
 
-This CLI connects to a remote MCP server (token analysis, x402-paid) and an
-optional local dex-trader-mcp server (Jupiter DEX trading). Use natural
-language to analyse tokens and buy/sell them.
+This CLI connects to a remote MCP server (svm402 token analysis, x402-paid)
+and optional local MCP servers:
+  • dex-trader-mcp   — Jupiter DEX trading (buy/sell/quote)
+  • dex-screener-mcp — DexScreener market data (pairs, volume, liquidity)
+  • dex-rugcheck-mcp — RugCheck safety reports (rug risk, contract analysis)
+  • solana-rpc-mcp   — Solana RPC queries (supply, holders, transactions)
 
 Example prompts:
   Analyse the token <mint-address>
   Buy 0.1 SOL worth of <token-address>
   Get a quote for swapping 1 SOL to <token-address>
   What's my balance?
+  Search for tokens named "bonk"
+  Check the rug score for <mint-address>
 
 Commands:
   /help       Show this help message
@@ -90,9 +95,45 @@ async function main(): Promise<void> {
     }
   }
 
+  let rugcheckClient: LocalMcpClient | undefined;
+  if (config.dexRugcheckMcpPath) {
+    console.log("Connecting to local dex-rugcheck-mcp server...");
+    try {
+      rugcheckClient = await createLocalMcpClient(config.dexRugcheckMcpPath, {});
+      const rugcheckToolNames = rugcheckClient.tools.map((t) => t.name).join(", ");
+      console.log(`Local dex-rugcheck-mcp connected. Tools: ${rugcheckToolNames}`);
+    } catch (err) {
+      console.error(
+        "Warning: failed to connect to dex-rugcheck-mcp:",
+        err instanceof Error ? err.message : String(err),
+      );
+      console.error("RugCheck tools will not be available.");
+    }
+  }
+
+  let rpcClient: LocalMcpClient | undefined;
+  if (config.solanaRpcMcpPath) {
+    console.log("Connecting to local solana-rpc-mcp server...");
+    const rpcEnv: Record<string, string> = {};
+    if (config.solanaRpcUrl) rpcEnv.SOLANA_RPC_URL = config.solanaRpcUrl;
+    try {
+      rpcClient = await createLocalMcpClient(config.solanaRpcMcpPath, rpcEnv);
+      const rpcToolNames = rpcClient.tools.map((t) => t.name).join(", ");
+      console.log(`Local solana-rpc-mcp connected. Tools: ${rpcToolNames}`);
+    } catch (err) {
+      console.error(
+        "Warning: failed to connect to solana-rpc-mcp:",
+        err instanceof Error ? err.message : String(err),
+      );
+      console.error("Solana RPC tools will not be available.");
+    }
+  }
+
   const localClients: LocalMcpClient[] = [];
   if (localClient) localClients.push(localClient);
   if (screenerClient) localClients.push(screenerClient);
+  if (rugcheckClient) localClients.push(rugcheckClient);
+  if (rpcClient) localClients.push(rpcClient);
 
   let router;
   try {
@@ -141,6 +182,12 @@ async function main(): Promise<void> {
     rl.close();
     if (stopTelegramBot) {
       stopTelegramBot();
+    }
+    if (rpcClient) {
+      await rpcClient.close().catch(() => {});
+    }
+    if (rugcheckClient) {
+      await rugcheckClient.close().catch(() => {});
     }
     if (screenerClient) {
       await screenerClient.close().catch(() => {});
@@ -200,6 +247,8 @@ async function main(): Promise<void> {
                 prev.solanaPrivateKey !== reloaded.solanaPrivateKey ||
                 prev.dexTraderMcpPath !== reloaded.dexTraderMcpPath ||
                 prev.dexScreenerMcpPath !== reloaded.dexScreenerMcpPath ||
+                prev.dexRugcheckMcpPath !== reloaded.dexRugcheckMcpPath ||
+                prev.solanaRpcMcpPath !== reloaded.solanaRpcMcpPath ||
                 prev.solanaRpcUrl !== reloaded.solanaRpcUrl ||
                 prev.jupiterApiBase !== reloaded.jupiterApiBase ||
                 prev.jupiterApiKey !== reloaded.jupiterApiKey;

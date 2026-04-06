@@ -143,6 +143,52 @@ const SYSTEM_INSTRUCTION = (walletAddress: string, toolNames: string[], channel:
   if (toolSet.has("get_latest_ads"))
     capabilities.push("- Get the latest promoted/advertised tokens on DexScreener (get_latest_ads)");
 
+  // dex-rugcheck-mcp tools
+  if (toolSet.has("get_token_summary"))
+    capabilities.push(
+      "- Get a RugCheck safety report for a Solana token: rug risk score, contract analysis, liquidity assessment (get_token_summary) — FREE, no payment required",
+    );
+
+  // solana-rpc-mcp tools
+  if (toolSet.has("getTokenSupply"))
+    capabilities.push("- Query Solana token supply (getTokenSupply)");
+  if (toolSet.has("getTokenLargestAccounts"))
+    capabilities.push("- Get the largest token holders for a mint (getTokenLargestAccounts)");
+  if (toolSet.has("getTokenAccountBalance"))
+    capabilities.push("- Get token account balance (getTokenAccountBalance)");
+  if (toolSet.has("getTokenAccountsByOwner"))
+    capabilities.push("- Get all token accounts for a wallet (getTokenAccountsByOwner)");
+  if (toolSet.has("getSignaturesForAddress"))
+    capabilities.push("- Get recent transaction signatures for an address (getSignaturesForAddress)");
+  if (toolSet.has("getTransaction"))
+    capabilities.push("- Get full transaction details by signature (getTransaction)");
+  if (toolSet.has("getAccountInfo"))
+    capabilities.push("- Get account info (owner, lamports, data) for a public key (getAccountInfo)");
+  if (toolSet.has("getBalance"))
+    capabilities.push("- Query raw SOL balance in lamports for any arbitrary public key via Solana RPC (getBalance — use get_balance for your own wallet)");
+  if (toolSet.has("getBlock"))
+    capabilities.push("- Get block data by slot (getBlock)");
+  if (toolSet.has("getBlockHeight"))
+    capabilities.push("- Get current block height (getBlockHeight)");
+  if (toolSet.has("getLatestBlockhash"))
+    capabilities.push("- Get latest blockhash (getLatestBlockhash)");
+  if (toolSet.has("getEpochInfo"))
+    capabilities.push("- Get current epoch info (getEpochInfo)");
+  if (toolSet.has("getMultipleAccounts"))
+    capabilities.push("- Get info for multiple accounts in one call (getMultipleAccounts)");
+  if (toolSet.has("getProgramAccounts"))
+    capabilities.push("- Get all accounts owned by a program (getProgramAccounts)");
+  if (toolSet.has("getSignatureStatuses"))
+    capabilities.push("- Get confirmation status of transactions (getSignatureStatuses)");
+  if (toolSet.has("getBlockTime"))
+    capabilities.push("- Get estimated production time for a block (getBlockTime)");
+  if (toolSet.has("getClusterNodes"))
+    capabilities.push("- Get info about cluster validator nodes (getClusterNodes)");
+  if (toolSet.has("getVersion"))
+    capabilities.push("- Get Solana node software version (getVersion)");
+  if (toolSet.has("getHealth"))
+    capabilities.push("- Check Solana cluster health (getHealth)");
+
   // Fallback for unknown tools
   const knownTools = new Set([
     "get_usdc_balance",
@@ -168,6 +214,28 @@ const SYSTEM_INSTRUCTION = (walletAddress: string, toolNames: string[], channel:
     "get_token_orders",
     "get_latest_community_takeovers",
     "get_latest_ads",
+    // dex-rugcheck-mcp tools
+    "get_token_summary",
+    // solana-rpc-mcp tools
+    "getBalance",
+    "getAccountInfo",
+    "getMultipleAccounts",
+    "getProgramAccounts",
+    "getTransaction",
+    "getSignaturesForAddress",
+    "getSignatureStatuses",
+    "getBlock",
+    "getBlockHeight",
+    "getLatestBlockhash",
+    "getBlockTime",
+    "getTokenAccountBalance",
+    "getTokenAccountsByOwner",
+    "getTokenSupply",
+    "getTokenLargestAccounts",
+    "getClusterNodes",
+    "getEpochInfo",
+    "getVersion",
+    "getHealth",
   ]);
   const unknownTools = toolNames.filter((t) => !knownTools.has(t));
   if (unknownTools.length > 0) {
@@ -181,7 +249,14 @@ ${capabilities.join("\n")}
 
 When the user refers to "my wallet", "my balance", or similar, use their wallet address shown above. When the user asks you to perform an action, use the appropriate tool. Always confirm amounts and addresses before executing transactions. Report results clearly.
 
-IMPORTANT: Only use tools that are explicitly available to you. Do NOT attempt to call tools that are not in your function declarations. If analyze_token requires payment, it is handled automatically — never send USDC manually to pay for tool access. When the user wants to trade (buy/sell tokens), use the Jupiter-powered trading tools. Always suggest previewing a trade with get_quote before executing buy_token or sell_token.${channel === "telegram" ? TELEGRAM_FORMAT_ADDENDUM : ""}`;
+IMPORTANT: Only use tools that are explicitly available to you. Do NOT attempt to call tools that are not in your function declarations. If analyze_token requires payment, it is handled automatically — never send USDC manually to pay for tool access. When the user wants to trade (buy/sell tokens), use the Jupiter-powered trading tools. Always suggest previewing a trade with get_quote before executing buy_token or sell_token.
+
+TOKEN ANALYSIS WORKFLOW: When a user asks you to analyse or research a token, gather FREE data first before suggesting the paid analyze_token tool. Follow this order when the tools are available:
+1. DexScreener (search_pairs, get_token_pools, get_tokens_by_address) — market data, pairs, volume, liquidity
+2. RugCheck (get_token_summary) — safety report, rug risk score, contract analysis
+3. Solana RPC (getTokenSupply, getTokenLargestAccounts, getSignaturesForAddress) — on-chain supply, top holders, recent activity
+4. Jupiter quote (get_quote) — current price and route
+Present this free data as an initial summary, then offer to run analyze_token for a deeper paid analysis via svm402 if the user wants more detail.${channel === "telegram" ? TELEGRAM_FORMAT_ADDENDUM : ""}`;
 };
 
 /**
@@ -208,6 +283,28 @@ const READ_ONLY_TOOLS = new Set([
   "get_token_orders",
   "get_latest_community_takeovers",
   "get_latest_ads",
+  // dex-rugcheck-mcp tools (read-only, public RugCheck API)
+  "get_token_summary",
+  // solana-rpc-mcp tools (all read-only RPC queries)
+  "getBalance",
+  "getAccountInfo",
+  "getMultipleAccounts",
+  "getProgramAccounts",
+  "getTransaction",
+  "getSignaturesForAddress",
+  "getSignatureStatuses",
+  "getBlock",
+  "getBlockHeight",
+  "getLatestBlockhash",
+  "getBlockTime",
+  "getTokenAccountBalance",
+  "getTokenAccountsByOwner",
+  "getTokenSupply",
+  "getTokenLargestAccounts",
+  "getClusterNodes",
+  "getEpochInfo",
+  "getVersion",
+  "getHealth",
 ]);
 
 /**

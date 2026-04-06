@@ -8,9 +8,13 @@ INSTALL_DIR="$HOME/soltrader"
 AGENT_DIR="$INSTALL_DIR/sol-trader-agent"
 DEX_DIR="$INSTALL_DIR/dex-trader-mcp"
 SCREENER_DIR="$INSTALL_DIR/dex-screener-mcp"
+RUGCHECK_DIR="$INSTALL_DIR/dex-rugcheck-mcp"
+RPC_DIR="$INSTALL_DIR/solana-rpc-mcp"
 AGENT_REPO="https://github.com/dchu3/sol-trader-agent.git"
 DEX_REPO="https://github.com/dchu3/dex-trader-mcp.git"
 SCREENER_REPO="https://github.com/dchu3/dex-screener-mcp.git"
+RUGCHECK_REPO="https://github.com/dchu3/dex-rugcheck-mcp.git"
+RPC_REPO="https://github.com/dchu3/solana-rpc-mcp.git"
 MIN_NODE_MAJOR=20
 MIN_NODE_MINOR=18
 
@@ -381,12 +385,102 @@ if [ "$SETUP_SCREENER" = "true" ]; then
   cd "$AGENT_DIR"
 fi
 
-# ── 7. Build the project ────────────────────────────────────────────
+# ── 7. Optional dex-rugcheck-mcp setup ──────────────────────────────
+step "RugCheck Token Safety Tools (optional)"
+printf "  dex-rugcheck-mcp enables RugCheck token safety analysis (rug detection).\n\n"
+
+SETUP_RUGCHECK=false
+if prompt_yn "Install dex-rugcheck-mcp safety analysis tools?"; then
+  SETUP_RUGCHECK=true
+fi
+
+if [ "$SETUP_RUGCHECK" = "true" ]; then
+  if [ -d "$RUGCHECK_DIR/.git" ]; then
+    warn "dex-rugcheck-mcp already exists at $RUGCHECK_DIR"
+    if prompt_yn "Update it with git pull and rebuild?"; then
+      cd "$RUGCHECK_DIR"
+      git pull --ff-only || { error "git pull failed — resolve manually."; exit 1; }
+    else
+      info "Skipping — using existing dex-rugcheck-mcp"
+    fi
+  else
+    info "Cloning dex-rugcheck-mcp..."
+    git clone "$RUGCHECK_REPO" "$RUGCHECK_DIR" || { error "git clone failed for dex-rugcheck-mcp."; exit 1; }
+    info "Cloned to $RUGCHECK_DIR"
+  fi
+
+  cd "$RUGCHECK_DIR"
+  info "Installing dex-rugcheck-mcp dependencies..."
+  npm install --no-fund --no-audit
+  info "Building dex-rugcheck-mcp..."
+  npm run build
+  info "dex-rugcheck-mcp ready"
+
+  # Add DEX_RUGCHECK_MCP_PATH to .env if not already there
+  RUGCHECK_PATH_VALUE="$RUGCHECK_DIR/dist/index.js"
+  RUGCHECK_PATH_QUOTED=$(quote_env_value "$RUGCHECK_PATH_VALUE")
+  if grep -q "^DEX_RUGCHECK_MCP_PATH=" "$AGENT_DIR/.env" 2>/dev/null; then
+    sed -i.bak "s|^DEX_RUGCHECK_MCP_PATH=.*|DEX_RUGCHECK_MCP_PATH=${RUGCHECK_PATH_QUOTED}|" "$AGENT_DIR/.env"
+    rm -f "$AGENT_DIR/.env.bak"
+  else
+    printf "\n# Path to dex-rugcheck-mcp (enables RugCheck token safety analysis)\nDEX_RUGCHECK_MCP_PATH=%s\n" "$RUGCHECK_PATH_QUOTED" >> "$AGENT_DIR/.env"
+  fi
+  info "DEX_RUGCHECK_MCP_PATH set in .env"
+
+  cd "$AGENT_DIR"
+fi
+
+# ── 8. Optional solana-rpc-mcp setup ────────────────────────────────
+step "Solana RPC Blockchain Query Tools (optional)"
+printf "  solana-rpc-mcp enables direct Solana blockchain queries (token supply, holders, transactions).\n\n"
+
+SETUP_RPC=false
+if prompt_yn "Install solana-rpc-mcp blockchain query tools?"; then
+  SETUP_RPC=true
+fi
+
+if [ "$SETUP_RPC" = "true" ]; then
+  if [ -d "$RPC_DIR/.git" ]; then
+    warn "solana-rpc-mcp already exists at $RPC_DIR"
+    if prompt_yn "Update it with git pull and rebuild?"; then
+      cd "$RPC_DIR"
+      git pull --ff-only || { error "git pull failed — resolve manually."; exit 1; }
+    else
+      info "Skipping — using existing solana-rpc-mcp"
+    fi
+  else
+    info "Cloning solana-rpc-mcp..."
+    git clone "$RPC_REPO" "$RPC_DIR" || { error "git clone failed for solana-rpc-mcp."; exit 1; }
+    info "Cloned to $RPC_DIR"
+  fi
+
+  cd "$RPC_DIR"
+  info "Installing solana-rpc-mcp dependencies..."
+  npm install --no-fund --no-audit
+  info "Building solana-rpc-mcp..."
+  npm run build
+  info "solana-rpc-mcp ready"
+
+  # Add SOLANA_RPC_MCP_PATH to .env if not already there
+  RPC_PATH_VALUE="$RPC_DIR/dist/index.js"
+  RPC_PATH_QUOTED=$(quote_env_value "$RPC_PATH_VALUE")
+  if grep -q "^SOLANA_RPC_MCP_PATH=" "$AGENT_DIR/.env" 2>/dev/null; then
+    sed -i.bak "s|^SOLANA_RPC_MCP_PATH=.*|SOLANA_RPC_MCP_PATH=${RPC_PATH_QUOTED}|" "$AGENT_DIR/.env"
+    rm -f "$AGENT_DIR/.env.bak"
+  else
+    printf "\n# Path to solana-rpc-mcp (enables Solana RPC blockchain queries)\nSOLANA_RPC_MCP_PATH=%s\n" "$RPC_PATH_QUOTED" >> "$AGENT_DIR/.env"
+  fi
+  info "SOLANA_RPC_MCP_PATH set in .env"
+
+  cd "$AGENT_DIR"
+fi
+
+# ── 9. Build the project ────────────────────────────────────────────
 step "Building sol-trader-agent"
 npm run build
 info "Build complete"
 
-# ── 8. Summary ───────────────────────────────────────────────────────
+# ── 10. Summary ───────────────────────────────────────────────────────
 printf "\n"
 printf "%s╔══════════════════════════════════════════════════╗%s\n" "$GREEN" "$RESET"
 printf "%s║          Sol Trader Agent — Ready! 🚀            ║%s\n" "$GREEN" "$RESET"
@@ -402,6 +496,16 @@ if [ "$SETUP_SCREENER" = "true" ]; then
   printf "  ${BOLD}DexScreener:${RESET}       Enabled (~/soltrader/dex-screener-mcp)\n"
 else
   printf "  ${BOLD}DexScreener:${RESET}       Not installed (re-run setup to add later)\n"
+fi
+if [ "$SETUP_RUGCHECK" = "true" ]; then
+  printf "  ${BOLD}RugCheck:${RESET}          Enabled (~/soltrader/dex-rugcheck-mcp)\n"
+else
+  printf "  ${BOLD}RugCheck:${RESET}          Not installed (re-run setup to add later)\n"
+fi
+if [ "$SETUP_RPC" = "true" ]; then
+  printf "  ${BOLD}Solana RPC:${RESET}        Enabled (~/soltrader/solana-rpc-mcp)\n"
+else
+  printf "  ${BOLD}Solana RPC:${RESET}        Not installed (re-run setup to add later)\n"
 fi
 if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
   printf "  ${BOLD}Telegram bot:${RESET}      Configured\n"
