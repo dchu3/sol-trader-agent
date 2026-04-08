@@ -10,6 +10,7 @@ const packageJson = require("../package.json") as { version: string };
 
 export interface McpCallOptions {
   allowPayment?: boolean;
+  skipUnpaidProbe?: boolean;
 }
 
 export interface PaymentInfo {
@@ -159,6 +160,23 @@ export async function createRemoteMcpClient(
             .filter((s) => s.length > 0)
             .join("\n");
         };
+
+        // Skip the unpaid probe when the caller already knows payment is needed
+        // (e.g. after a 402 probe + user confirmation in agent.ts).
+        if (options?.skipUnpaidProbe && options?.allowPayment) {
+          debug(`Tool ${name} — skipping unpaid probe, going straight to paid client`);
+          try {
+            const paidClientInstance = await getPaidClient();
+            return await invokeWithClient(paidClientInstance);
+          } catch (paidErr) {
+            const paidMsg =
+              paidErr instanceof Error ? paidErr.message : String(paidErr);
+            debug(`x402 paid client failed: ${paidMsg}`);
+            throw new Error(
+              `x402 payment failed for tool "${name}": ${paidMsg}`,
+            );
+          }
+        }
 
         try {
           return await invokeWithClient(client);
