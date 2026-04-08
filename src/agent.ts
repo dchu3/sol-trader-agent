@@ -20,7 +20,7 @@ export interface ToolRouter {
   callTool(
     name: string,
     args: Record<string, unknown>,
-    options?: { allowPayment?: boolean },
+    options?: { allowPayment?: boolean; skipUnpaidProbe?: boolean },
   ): Promise<string>;
   /** Get payment info from the last remote MCP 402 probe (if any). */
   getLastPaymentInfo(): { amount: string; asset: string } | null;
@@ -270,8 +270,13 @@ Workflow:
 1. Discovery: Call get_top_boosted_tokens and get_latest_community_takeovers to find candidates.
 2. Filtering: Filter results by the user's preferred market cap range. If not specified, default to $100K-$5M.
 3. Primary Vetting: Use DexScreener data (search_pairs, get_token_pools) to check transaction count, volume, liquidity, and volume-to-liquidity ratio.
-4. Deep Analysis: Call analyze_token for the top 3 candidates to get manipulation scores and LP lock status. Also call get_token_summary for rug risk scores.
+4. Deep Analysis: Call analyze_token for the single most promising candidate first.
+   Present the result and ask the user whether to analyse additional candidates.
+   Do NOT call analyze_token for multiple tokens in a single response — wait for explicit user approval per token.
+   Also call get_token_summary for each candidate before suggesting paid analysis.
 5. Reporting: Present each candidate with a clear Organic Score (1-10) based on the criteria above, along with key metrics.
+
+EFFICIENCY: Batch multiple independent tool calls into a single turn whenever possible (e.g. search_pairs + get_token_summary together) to minimize round-trips.
 
 SAFETY (hard rules — NEVER recommend a token with any of these):
 - Less than 90% LP locked
@@ -468,6 +473,25 @@ function mcpToolsToGeminiDeclarations(
 }
 
 const MAX_TOOL_ROUNDS = 10;
+const MAX_TOOL_CALLS_PER_MESSAGE = 30;
+const MAX_FUNCTION_CALLS_PER_ROUND = 8;
+const MAX_CONSECUTIVE_FAILURES = 2;
+const MAX_HISTORY_ENTRIES = 100;
+
+/**
+ * Trim conversation history to prevent unbounded growth.
+ * Keeps the most recent entries, inserting a marker where older entries were removed.
+ */
+function trimHistory(history: Content[]): void {
+  if (history.length <= MAX_HISTORY_ENTRIES) return;
+  const keep = MAX_HISTORY_ENTRIES - 1;
+  const trimmed = [
+    { role: "user" as const, parts: [{ text: "[Earlier conversation history was trimmed to save context.]" }] },
+    ...history.slice(-keep),
+  ];
+  history.length = 0;
+  history.push(...trimmed);
+}
 
 export type ConfirmFn = (message: string) => Promise<boolean>;
 
@@ -493,17 +517,24 @@ export async function runAgent(
   const functionDeclarations = mcpToolsToGeminiDeclarations(router);
   const toolNames = router.tools.map((t) => t.name);
 
+  trimHistory(history);
   history.push({ role: "user", parts: [{ text: userMessage }] });
+
+  let totalToolCalls = 0;
+  const toolFailureCounts = new Map<string, number>();
+  const declinedTools = new Set<string>();
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     debug(`Agent loop round ${round + 1}/${MAX_TOOL_ROUNDS}`);
 
+    // On the last round, strip tool declarations to force a text summary
+    const isLastToolRound = round === MAX_TOOL_ROUNDS - 1;
     const response = await ai.models.generateContent({
       model,
       contents: history,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION(walletAddress, toolNames, channel),
-        tools: [{ functionDeclarations }],
+        tools: isLastToolRound ? [] : [{ functionDeclarations }],
       },
     });
 
@@ -528,8 +559,23 @@ export async function runAgent(
     }
 
     // Execute each function call and collect responses
+    const cappedCalls = functionCalls.slice(0, MAX_FUNCTION_CALLS_PER_ROUND);
+    if (functionCalls.length > MAX_FUNCTION_CALLS_PER_ROUND) {
+      debug(`Capped function calls from ${functionCalls.length} to ${MAX_FUNCTION_CALLS_PER_ROUND}`);
+    }
     const responseParts: Part[] = [];
-    for (const fc of functionCalls) {
+
+    // Generate stub responses for dropped calls to maintain Gemini's 1:1 functionCall/functionResponse pairing
+    for (const dc of functionCalls.slice(MAX_FUNCTION_CALLS_PER_ROUND)) {
+      responseParts.push({
+        functionResponse: {
+          id: dc.id,
+          name: dc.name ?? "unknown",
+          response: { error: "Skipped: per-round function call cap reached." },
+        },
+      });
+    }
+    for (const fc of cappedCalls) {
       // Treat missing tool name as a malformed call — skip execution.
       if (!fc.name) {
         responseParts.push({
@@ -545,6 +591,51 @@ export async function runAgent(
       const toolName = fc.name;
       const toolArgs = (fc.args as Record<string, unknown>) ?? {};
 
+      // Check per-message tool call budget
+      totalToolCalls++;
+      if (totalToolCalls > MAX_TOOL_CALLS_PER_MESSAGE) {
+        debug(`Tool call budget exhausted (${MAX_TOOL_CALLS_PER_MESSAGE})`);
+        responseParts.push({
+          functionResponse: {
+            id: fc.id,
+            name: toolName,
+            response: {
+              error: `Tool call limit (${MAX_TOOL_CALLS_PER_MESSAGE}) reached for this request. ` +
+                "Summarise what you have gathered so far and present it to the user.",
+            },
+          },
+        });
+        continue;
+      }
+
+      // Block tools the user previously declined this message
+      if (declinedTools.has(toolName)) {
+        responseParts.push({
+          functionResponse: {
+            id: fc.id,
+            name: toolName,
+            response: { error: "This tool was declined by the user and is blocked for this message." },
+          },
+        });
+        continue;
+      }
+
+      // Circuit breaker: block tools that have failed too many times
+      const failCount = toolFailureCounts.get(toolName) ?? 0;
+      if (failCount >= MAX_CONSECUTIVE_FAILURES) {
+        responseParts.push({
+          functionResponse: {
+            id: fc.id,
+            name: toolName,
+            response: {
+              error: `${toolName} has failed ${failCount} times. Do NOT call it again. ` +
+                "Use alternative tools or summarise what you have so far.",
+            },
+          },
+        });
+        continue;
+      }
+
       debug(`Calling tool: ${toolName}(${JSON.stringify(toolArgs)})`);
 
       let output: Record<string, unknown>;
@@ -555,6 +646,7 @@ export async function runAgent(
             allowPayment: false,
           });
           output = { result: resultText };
+          toolFailureCounts.delete(toolName);
           debug(`Tool ${toolName} result: ${resultText}`);
         } else if (PROBE_SAFE_TOOLS.has(toolName)) {
           // ── Non-destructive paid tool: probe for cost, confirm with cost ──
@@ -564,6 +656,7 @@ export async function runAgent(
             });
             // Succeeded without payment
             output = { result: resultText };
+            toolFailureCounts.delete(toolName);
             debug(`Tool ${toolName} result: ${resultText}`);
           } catch (probeErr) {
             const probeMsg =
@@ -586,6 +679,7 @@ export async function runAgent(
 
             const approved = await confirmFn(message);
             if (!approved) {
+              declinedTools.add(toolName);
               output = { error: "User explicitly declined this action. Do not retry or re-request this tool call." };
               responseParts.push({
                 functionResponse: {
@@ -599,8 +693,10 @@ export async function runAgent(
 
             const resultText = await router.callTool(toolName, toolArgs, {
               allowPayment: true,
+              skipUnpaidProbe: true,
             });
             output = { result: resultText };
+            toolFailureCounts.delete(toolName);
             debug(`Tool ${toolName} result: ${resultText}`);
           }
         } else {
@@ -608,6 +704,7 @@ export async function runAgent(
           const message = formatToolAction(toolName, toolArgs);
           const approved = await confirmFn(message);
           if (!approved) {
+            declinedTools.add(toolName);
             output = { error: "User explicitly declined this action. Do not retry or re-request this tool call." };
             responseParts.push({
               functionResponse: {
@@ -624,6 +721,7 @@ export async function runAgent(
               allowPayment: false,
             });
             output = { result: resultText };
+            toolFailureCounts.delete(toolName);
             debug(`Tool ${toolName} result: ${resultText}`);
           } catch (callErr) {
             const callMsg =
@@ -648,6 +746,7 @@ export async function runAgent(
 
             const payApproved = await confirmFn(payMessage);
             if (!payApproved) {
+              declinedTools.add(toolName);
               output = { error: "User explicitly declined payment. Do not retry or re-request this tool call." };
               responseParts.push({
                 functionResponse: {
@@ -661,21 +760,35 @@ export async function runAgent(
 
             const resultText = await router.callTool(toolName, toolArgs, {
               allowPayment: true,
+              skipUnpaidProbe: true,
             });
             output = { result: resultText };
+            toolFailureCounts.delete(toolName);
             debug(`Tool ${toolName} result: ${resultText}`);
           }
         }
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
-        debug(`Tool ${toolName} error: ${errorMsg}`);
+        const newFailCount = (toolFailureCounts.get(toolName) ?? 0) + 1;
+        toolFailureCounts.set(toolName, newFailCount);
+        debug(`Tool ${toolName} error (failure ${newFailCount}): ${errorMsg}`);
         output = {
-          error: errorMsg,
+          error: newFailCount >= MAX_CONSECUTIVE_FAILURES
+            ? `${errorMsg} — This tool has failed ${newFailCount} times. Do NOT call it again. Summarise what you have so far.`
+            : errorMsg,
         };
       }
 
       responseParts.push({
         functionResponse: { id: fc.id, name: toolName, response: output },
+      });
+    }
+
+    // Warn the model when approaching the round budget
+    if (round === MAX_TOOL_ROUNDS - 2) {
+      responseParts.push({
+        text: "SYSTEM: You have 1 tool-calling round remaining. You MUST produce your final text " +
+          "summary on the next turn using data already gathered. Do NOT call any more tools.",
       });
     }
 

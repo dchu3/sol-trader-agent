@@ -33,6 +33,7 @@ Example prompts:
 Commands:
   /help       Show this help message
   /configure  View and update settings (.env)
+  /clear      Clear conversation history
   /quit       Exit the application
 
 Token analysis is paid via x402 — you'll be asked to confirm before any
@@ -231,6 +232,11 @@ async function main(): Promise<void> {
       if (trimmed === "/quit") break;
       if (trimmed === "/help") {
         printHelp();
+        continue;
+      }
+      if (trimmed === "/clear") {
+        conversationHistory.length = 0;
+        console.log("Conversation history cleared.");
         continue;
       }
       if (trimmed === "/configure") {
