@@ -8,6 +8,8 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { McpClient } from "./mcp-client.js";
 import type { LocalMcpClient } from "./local-mcp-client.js";
 import { debug } from "./logger.js";
+import type { TokenCache } from "./token-cache.js";
+import { CACHEABLE_TOOLS } from "./token-cache.js";
 
 /**
  * A unified interface the agent uses to call any tool regardless of which
@@ -278,6 +280,8 @@ Workflow:
 
 EFFICIENCY: Batch multiple independent tool calls into a single turn whenever possible (e.g. search_pairs + get_token_summary together) to minimize round-trips.
 
+CACHED DATA: Some tool results are cached locally to avoid duplicate API calls and save costs. When you receive a tool result prefixed with [CACHED — fetched X minutes ago], this means the data was retrieved previously and served from cache. Present the cached data to the user, clearly noting how old it is, and ask if they would like you to fetch fresh data. If they say yes, simply call the same tool again — the cache will automatically serve fresh data on the second request.
+
 SAFETY (hard rules — NEVER recommend a token with any of these):
 - Less than 90% LP locked
 - A "High Risk" score from svm402 analyze_token
@@ -511,6 +515,7 @@ export async function runAgent(
   walletAddress: string,
   confirmFn: ConfirmFn = rejectByDefault,
   channel: Channel = "cli",
+  cache?: TokenCache,
 ): Promise<string> {
   const ai = new GoogleGenAI({ apiKey });
 
@@ -640,6 +645,30 @@ export async function runAgent(
 
       let output: Record<string, unknown>;
       try {
+        // ── Cache check for cacheable tools ──
+        if (cache && CACHEABLE_TOOLS.has(toolName)) {
+          try {
+            const cached = cache.get(toolName, toolArgs);
+            if (cached && !cached.stale) {
+              const ageMs = Date.now() - cached.createdAt;
+              const ageMin = Math.round(ageMs / 60_000);
+              const ageLabel = ageMin < 1 ? "less than a minute" : `${ageMin} minute${ageMin === 1 ? "" : "s"}`;
+              debug(`Cache hit for ${toolName} (age: ${ageLabel}, stale: false)`);
+              cache.markStale(toolName, toolArgs);
+              output = { result: `[CACHED — fetched ${ageLabel} ago] ${cached.result}` };
+              responseParts.push({
+                functionResponse: { id: fc.id, name: toolName, response: output },
+              });
+              continue;
+            }
+            if (cached?.stale) {
+              debug(`Cache hit for ${toolName} but stale — bypassing cache`);
+            }
+          } catch (cacheErr) {
+            debug(`Cache read error for ${toolName}, falling through to live call: ${cacheErr instanceof Error ? cacheErr.message : String(cacheErr)}`);
+          }
+        }
+
         if (READ_ONLY_TOOLS.has(toolName)) {
           // ── Read-only: call directly, no confirmation, no payment ──
           const resultText = await router.callTool(toolName, toolArgs, {
@@ -777,6 +806,15 @@ export async function runAgent(
             ? `${errorMsg} — This tool has failed ${newFailCount} times. Do NOT call it again. Summarise what you have so far.`
             : errorMsg,
         };
+      }
+
+      // Store successful results in cache for cacheable tools
+      if (cache && CACHEABLE_TOOLS.has(toolName) && "result" in output) {
+        try {
+          cache.set(toolName, toolArgs, output.result as string);
+        } catch (cacheErr) {
+          debug(`Cache write error for ${toolName}: ${cacheErr instanceof Error ? cacheErr.message : String(cacheErr)}`);
+        }
       }
 
       responseParts.push({

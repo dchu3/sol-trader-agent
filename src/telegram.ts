@@ -4,6 +4,7 @@ import type { Config } from "./config.js";
 import type { ToolRouter, ConfirmFn, Channel } from "./agent.js";
 import { runAgent } from "./agent.js";
 import { debug } from "./logger.js";
+import type { TokenCache } from "./token-cache.js";
 
 /** Telegram message length limit. */
 const MAX_MESSAGE_LENGTH = 4096;
@@ -26,6 +27,7 @@ interface PendingConfirmation {
 export async function startTelegramBot(
   config: Config,
   router: ToolRouter,
+  cache?: TokenCache,
 ): Promise<() => void> {
   if (!config.telegramBotToken) {
     throw new Error("TELEGRAM_BOT_TOKEN is required to start the Telegram bot");
@@ -179,6 +181,7 @@ export async function startTelegramBot(
         config.walletAddress,
         confirmFn,
         "telegram",
+        cache,
       );
 
       await sendLongMessage(ctx, chatId, answer);
