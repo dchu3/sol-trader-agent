@@ -10,6 +10,7 @@ import { runAgent, createToolRouter } from "./agent.js";
 import { setVerbose } from "./logger.js";
 import { startTelegramBot } from "./telegram.js";
 import { runConfigure } from "./configure.js";
+import { TokenCache, extractTokenAddress } from "./token-cache.js";
 
 function printHelp(): void {
   console.log(`
@@ -33,6 +34,8 @@ Example prompts:
 Commands:
   /help       Show this help message
   /configure  View and update settings (.env)
+  /cache      Show cached token data
+  /cache clear [address]  Clear cache (all or for a specific token)
   /clear      Clear conversation history
   /quit       Exit the application
 
@@ -46,6 +49,8 @@ async function main(): Promise<void> {
     process.argv.includes("--verbose") || process.argv.includes("-v");
   let config: Config = loadConfig();
   setVerbose(verbose || config.verbose);
+
+  const cache = new TokenCache();
 
   console.log("Connecting to remote MCP server...");
   const mcpClient: McpClient = await createRemoteMcpClient(
@@ -161,7 +166,7 @@ async function main(): Promise<void> {
   let stopTelegramBot: (() => void) | undefined;
   if (config.telegramBotToken) {
     try {
-      stopTelegramBot = await startTelegramBot(config, router);
+      stopTelegramBot = await startTelegramBot(config, router, cache);
     } catch (err) {
       console.error(
         "Warning: failed to start Telegram bot:",
@@ -197,6 +202,7 @@ async function main(): Promise<void> {
       await localClient.close().catch(() => {});
     }
     await mcpClient.close();
+    cache.close();
   };
 
   const handleSignal = () => {
@@ -237,6 +243,37 @@ async function main(): Promise<void> {
       if (trimmed === "/clear") {
         conversationHistory.length = 0;
         console.log("Conversation history cleared.");
+        continue;
+      }
+      if (trimmed === "/cache" || trimmed.startsWith("/cache ")) {
+        const parts = trimmed.split(/\s+/);
+        if (parts.length === 1) {
+          const entries = cache.list();
+          if (entries.length === 0) {
+            console.log("Token cache is empty.");
+          } else {
+            console.log(`\nCached entries (${entries.length}):\n`);
+            for (const entry of entries) {
+              const ageMs = Date.now() - entry.createdAt;
+              const ageMin = Math.round(ageMs / 60_000);
+              const ageLabel = ageMin < 1 ? "<1m" : `${ageMin}m`;
+              const addr = extractTokenAddress(JSON.parse(entry.argsJson) as Record<string, unknown>) ?? "—";
+              const staleTag = entry.stale ? " [stale]" : "";
+              console.log(`  ${entry.toolName}  ${addr}  (${ageLabel} ago)${staleTag}`);
+            }
+            console.log();
+          }
+        } else if (parts[1] === "clear") {
+          const address = parts[2];
+          const removed = cache.clear(address);
+          if (address) {
+            console.log(`Cleared ${removed} cache entries for ${address}.`);
+          } else {
+            console.log(`Cleared ${removed} cache entries.`);
+          }
+        } else {
+          console.log("Usage: /cache | /cache clear [address]");
+        }
         continue;
       }
       if (trimmed === "/configure") {
@@ -319,6 +356,8 @@ async function main(): Promise<void> {
           conversationHistory,
           config.walletAddress,
           confirmFn,
+          "cli",
+          cache,
         );
         console.log(`\n${answer}\n`);
       } catch (err) {
