@@ -5,6 +5,8 @@ import type { ToolRouter, ConfirmFn, Channel } from "./agent.js";
 import { runAgent } from "./agent.js";
 import { debug } from "./logger.js";
 import type { TokenCache } from "./token-cache.js";
+import type { WhaleDb } from "./whale-db.js";
+import type { WhaleTracker, WhaleSwapEvent } from "./whale-tracker.js";
 
 /** Telegram message length limit. */
 const MAX_MESSAGE_LENGTH = 4096;
@@ -28,6 +30,8 @@ export async function startTelegramBot(
   config: Config,
   router: ToolRouter,
   cache?: TokenCache,
+  whaleDb?: WhaleDb,
+  whaleTracker?: WhaleTracker | null,
 ): Promise<() => void> {
   if (!config.telegramBotToken) {
     throw new Error("TELEGRAM_BOT_TOKEN is required to start the Telegram bot");
@@ -92,6 +96,75 @@ export async function startTelegramBot(
     const chatId = ctx.chat.id;
     histories.delete(chatId);
     await ctx.reply("🗑️ Conversation history cleared.");
+  });
+
+  bot.command("watch", async (ctx) => {
+    if (!whaleDb) {
+      await ctx.reply("🐋 Whale tracking is not available.");
+      return;
+    }
+    const text = ctx.message?.text ?? "";
+    const parts = text.replace(/^\/watch\s*/, "").trim().split(/\s+/);
+    const address = parts[0];
+    if (!address || address.length < 32) {
+      await ctx.reply("Usage: /watch <wallet_address> [label]");
+      return;
+    }
+    const label = parts.slice(1).join(" ");
+    const added = whaleDb.addWallet(address, label);
+    if (added) {
+      await ctx.reply(`🐋 Now watching ${label ? `"${label}" (${address})` : address}`);
+    } else {
+      await ctx.reply(`Already watching ${address}`);
+    }
+  });
+
+  bot.command("unwatch", async (ctx) => {
+    if (!whaleDb) {
+      await ctx.reply("🐋 Whale tracking is not available.");
+      return;
+    }
+    const address = (ctx.message?.text ?? "").replace(/^\/unwatch\s*/, "").trim();
+    if (!address) {
+      await ctx.reply("Usage: /unwatch <wallet_address>");
+      return;
+    }
+    const removed = whaleDb.removeWallet(address);
+    await ctx.reply(removed ? `Stopped watching ${address}` : `${address} was not watched`);
+  });
+
+  bot.command("whales", async (ctx) => {
+    if (!whaleDb) {
+      await ctx.reply("🐋 Whale tracking is not available.");
+      return;
+    }
+    const wallets = whaleDb.listWallets();
+    const alerts = whaleDb.recentAlerts(5);
+    let msg = `🐋 <b>Watched Wallets (${wallets.length})</b>\n`;
+    if (wallets.length === 0) {
+      msg += "No wallets being watched.\n";
+    } else {
+      for (const w of wallets) {
+        const label = w.label ? ` (${w.label})` : "";
+        msg += `• <code>${w.address}</code>${label}\n`;
+      }
+    }
+    msg += `\n<b>Recent Alerts (${alerts.length})</b>\n`;
+    if (alerts.length === 0) {
+      msg += "No alerts yet.";
+    } else {
+      for (const a of alerts) {
+        const label = a.walletLabel || a.walletAddress.slice(0, 8) + "...";
+        const token = a.tokenSymbol || a.tokenAddress.slice(0, 8) + "...";
+        const action = a.action === "buy" ? "🟢 BUY" : a.action === "sell" ? "🔴 SELL" : "⚪ ???";
+        msg += `${action} ${label} → ${token} (${a.solAmount} SOL)\n`;
+      }
+    }
+    try {
+      await ctx.reply(msg, { parse_mode: "HTML" });
+    } catch {
+      await ctx.reply(msg.replace(/<[^>]*>/g, ""));
+    }
   });
 
   // ── Callback queries (inline keyboard confirmations) ─────────────────
@@ -407,7 +480,31 @@ export async function startTelegramBot(
   await bot.api.setMyCommands([
     { command: "help", description: "Show usage info" },
     { command: "clear", description: "Reset conversation history" },
+    { command: "watch", description: "Watch a whale wallet" },
+    { command: "unwatch", description: "Stop watching a wallet" },
+    { command: "whales", description: "List watched wallets & alerts" },
   ]);
+
+  // ── Whale alert forwarding ────────────────────────────────────────────
+  if (whaleTracker) {
+    const forwardAlert = (event: WhaleSwapEvent) => {
+      const a = event.alert;
+      const label = a.walletLabel || a.walletAddress.slice(0, 8) + "...";
+      const token = a.tokenSymbol || a.tokenAddress.slice(0, 8) + "...";
+      const action = a.action === "buy" ? "🟢 BUY" : a.action === "sell" ? "🔴 SELL" : "⚪ ???";
+      const msg = `🐋 <b>Whale Alert</b>\n${action} <b>${label}</b> → <code>${token}</code>\nAmount: ${a.solAmount} SOL\nTx: <code>${a.signature.slice(0, 16)}...</code>`;
+
+      // Forward to all known chat IDs (the auth middleware will filter)
+      const targetChatId = config.telegramChatId;
+      if (targetChatId) {
+        bot.api.sendMessage(targetChatId, msg, { parse_mode: "HTML" }).catch((err) => {
+          debug(`Failed to forward whale alert to Telegram: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
+    };
+
+    whaleTracker.on("alert", forwardAlert);
+  }
 
   // ── Start bot ────────────────────────────────────────────────────────
   // bot.start() runs long-polling in the background and returns immediately
