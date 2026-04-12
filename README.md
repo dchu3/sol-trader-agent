@@ -267,23 +267,33 @@ Telegram commands: `/start` (welcome), `/help` (usage info), `/clear` (reset con
 
 ### Docker
 
-Build and run with Docker Compose:
+Build and run interactively with Docker Compose (full CLI + Telegram):
 
 ```bash
-docker compose run --rm agent        # Interactive CLI + Telegram
+docker compose run --rm agent        # Interactive terminal UI + Telegram
 ```
 
-To run Telegram-only in the background (no CLI):
+For headless mode (Telegram-only, no terminal UI):
 
 ```bash
-docker compose up -d
+docker compose up -d                 # Detached — Telegram + whale tracker only
+docker compose up                    # Foreground — same, with log output
+```
+
+> **Note:** `docker compose up` does not attach a TTY, so the agent automatically runs in headless mode (Telegram + whale tracker only). Use `docker compose run --rm agent` for the interactive ink terminal UI.
+
+You can also force headless mode with the `--headless` flag:
+
+```bash
+npm start -- --headless              # Headless even with a TTY
 ```
 
 Or without Compose:
 
 ```bash
 docker build -t sol-trader-agent .
-docker run -it --env-file .env sol-trader-agent
+docker run -it --env-file .env sol-trader-agent          # Interactive
+docker run -d --env-file .env sol-trader-agent            # Headless/detached
 ```
 
 To use local MCP servers inside Docker, uncomment/add the volume mounts in `docker-compose.yml` and set the corresponding path environment variables. The compose file includes volume mounts for dex-screener-mcp, dex-rugcheck-mcp, and solana-rpc-mcp by default.
