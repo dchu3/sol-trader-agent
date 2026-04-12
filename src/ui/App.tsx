@@ -392,7 +392,7 @@ export function App({
             />
           )}
 
-          <Box borderStyle="single" borderColor="gray" borderTop borderBottom={false} borderLeft={false} borderRight={false}>
+          <Box borderStyle="single" borderColor="gray" borderTop borderBottom={false} borderLeft={false} borderRight={false} height={3} flexShrink={0}>
             <InputPrompt
               onSubmit={handleSubmit}
               disabled={processing}
