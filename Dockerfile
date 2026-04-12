@@ -28,4 +28,7 @@ COPY --from=build /app/dist ./dist
 # Ensure the data directory exists for the token cache
 RUN mkdir -p /app/data
 
+# Ensure ink can detect terminal capabilities when a TTY is allocated
+ENV TERM=xterm-256color
+
 ENTRYPOINT ["node", "dist/index.js"]
