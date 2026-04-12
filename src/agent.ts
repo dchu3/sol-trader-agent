@@ -191,6 +191,18 @@ const SYSTEM_INSTRUCTION = (walletAddress: string, toolNames: string[], channel:
   if (toolSet.has("getHealth"))
     capabilities.push("- Check Solana cluster health (getHealth)");
 
+  // whale tracking tools
+  if (toolSet.has("watch_wallet"))
+    capabilities.push(
+      "- Add a wallet to the whale watch list for real-time DEX swap monitoring (watch_wallet)",
+    );
+  if (toolSet.has("unwatch_wallet"))
+    capabilities.push("- Remove a wallet from the whale watch list (unwatch_wallet)");
+  if (toolSet.has("list_watched_wallets"))
+    capabilities.push("- List all currently watched whale wallets (list_watched_wallets)");
+  if (toolSet.has("get_whale_alerts"))
+    capabilities.push("- Get recent whale alerts — DEX swaps from watched wallets (get_whale_alerts)");
+
   // Fallback for unknown tools
   const knownTools = new Set([
     "get_usdc_balance",
@@ -238,6 +250,11 @@ const SYSTEM_INSTRUCTION = (walletAddress: string, toolNames: string[], channel:
     "getEpochInfo",
     "getVersion",
     "getHealth",
+    // whale tracking tools
+    "watch_wallet",
+    "unwatch_wallet",
+    "list_watched_wallets",
+    "get_whale_alerts",
   ]);
   const unknownTools = toolNames.filter((t) => !knownTools.has(t));
   if (unknownTools.length > 0) {
@@ -286,7 +303,14 @@ SAFETY (hard rules — NEVER recommend a token with any of these):
 - Less than 90% LP locked
 - A "High Risk" score from svm402 analyze_token
 - Active distribution / whale dumping signals
-If a token fails any safety check, explicitly flag it as unsafe and explain why.${channel === "telegram" ? TELEGRAM_FORMAT_ADDENDUM : ""}`;
+If a token fails any safety check, explicitly flag it as unsafe and explain why.
+
+WHALE TRACKING: When analysing a token, after checking top holders via getTokenLargestAccounts:
+1. Identify wallets holding >2% of supply — these are significant holders worth monitoring.
+2. Suggest the user watch interesting whale wallets using watch_wallet with a descriptive label (e.g. "Top Holder #1 — 5.2% supply").
+3. When the user asks to follow, track, or copy-trade a wallet, use watch_wallet to add it.
+4. The whale tracker runs in the background and will alert the user when watched wallets make DEX swaps.
+5. Use get_whale_alerts to show recent whale activity when asked.${channel === "telegram" ? TELEGRAM_FORMAT_ADDENDUM : ""}`;
 };
 
 /**
@@ -335,6 +359,11 @@ const READ_ONLY_TOOLS = new Set([
   "getEpochInfo",
   "getVersion",
   "getHealth",
+  // whale tracking tools (read-only: watch/unwatch modify the local DB, not the blockchain)
+  "watch_wallet",
+  "unwatch_wallet",
+  "list_watched_wallets",
+  "get_whale_alerts",
 ]);
 
 /**

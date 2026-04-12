@@ -1,56 +1,29 @@
-import * as readline from "node:readline/promises";
-import { loadConfig, reloadConfig } from "./config.js";
+import React from "react";
+import { render } from "ink";
+import { loadConfig } from "./config.js";
 import type { Config } from "./config.js";
 import { createRemoteMcpClient } from "./mcp-client.js";
 import type { McpClient } from "./mcp-client.js";
 import { createLocalMcpClient } from "./local-mcp-client.js";
 import type { LocalMcpClient } from "./local-mcp-client.js";
-import { type Content } from "@google/genai";
-import { runAgent, createToolRouter } from "./agent.js";
+import { createToolRouter } from "./agent.js";
+import type { ToolRouter } from "./agent.js";
 import { setVerbose } from "./logger.js";
 import { startTelegramBot } from "./telegram.js";
-import { runConfigure } from "./configure.js";
-import { TokenCache, extractTokenAddress } from "./token-cache.js";
-
-function printHelp(): void {
-  console.log(`
-Sol Trader Agent — analyse tokens and trade on Solana DEXs.
-
-This CLI connects to a remote MCP server (svm402 token analysis, x402-paid)
-and optional local MCP servers:
-  • dex-trader-mcp   — Jupiter DEX trading (buy/sell/quote)
-  • dex-screener-mcp — DexScreener market data (pairs, volume, liquidity)
-  • dex-rugcheck-mcp — RugCheck safety reports (rug risk, contract analysis)
-  • solana-rpc-mcp   — Solana RPC queries (supply, holders, transactions)
-
-Example prompts:
-  Analyse the token <mint-address>
-  Buy 0.1 SOL worth of <token-address>
-  Get a quote for swapping 1 SOL to <token-address>
-  What's my balance?
-  Search for tokens named "bonk"
-  Check the rug score for <mint-address>
-
-Commands:
-  /help       Show this help message
-  /configure  View and update settings (.env)
-  /cache      Show cached token data
-  /cache clear [address]  Clear cache (all or for a specific token)
-  /clear      Clear conversation history
-  /quit       Exit the application
-
-Token analysis is paid via x402 — you'll be asked to confirm before any
-funds are spent. Trading actions (buy/sell) also require confirmation.
-`);
-}
+import { TokenCache } from "./token-cache.js";
+import { WhaleDb } from "./whale-db.js";
+import { WhaleTracker } from "./whale-tracker.js";
+import { createWhaleTools } from "./agent-whale-tools.js";
+import { App } from "./ui/App.js";
 
 async function main(): Promise<void> {
   const verbose =
     process.argv.includes("--verbose") || process.argv.includes("-v");
-  let config: Config = loadConfig();
+  const config: Config = loadConfig();
   setVerbose(verbose || config.verbose);
 
   const cache = new TokenCache();
+  const whaleDb = new WhaleDb();
 
   console.log("Connecting to remote MCP server...");
   const mcpClient: McpClient = await createRemoteMcpClient(
@@ -88,7 +61,6 @@ async function main(): Promise<void> {
   if (config.dexScreenerMcpPath) {
     console.log("Connecting to local dex-screener-mcp server...");
     try {
-      // Empty env: dex-screener-mcp is a stateless public API wrapper, no secrets needed
       screenerClient = await createLocalMcpClient(config.dexScreenerMcpPath, {});
       const screenerToolNames = screenerClient.tools.map((t) => t.name).join(", ");
       console.log(`Local dex-screener-mcp connected. Tools: ${screenerToolNames}`);
@@ -141,32 +113,59 @@ async function main(): Promise<void> {
   if (rugcheckClient) localClients.push(rugcheckClient);
   if (rpcClient) localClients.push(rpcClient);
 
-  let router;
+  let router: ToolRouter;
   try {
     router = createToolRouter(mcpClient, localClients);
   } catch (err) {
-    // Clean up spawned subprocesses before re-throwing
     for (const client of localClients) {
       await client.close().catch(() => {});
     }
     throw err;
   }
-  const allToolNames = router.tools.map((t) => t.name).join(", ");
-  console.log(`All available tools: ${allToolNames}`);
+
+  // Register whale pseudo-tools into the router
+  const whaleTools = createWhaleTools(whaleDb);
+  const allToolNames = new Set(router.tools.map((t) => t.name));
+  const whaleToolRouter: ToolRouter = {
+    tools: [...router.tools, ...whaleTools.tools],
+
+    async callTool(name, args, options) {
+      if (!allToolNames.has(name)) {
+        // Check if it's a whale tool
+        const whaleToolNames = new Set(whaleTools.tools.map((t) => t.name));
+        if (whaleToolNames.has(name)) {
+          return whaleTools.callTool(name, args);
+        }
+      }
+      return router.callTool(name, args, options);
+    },
+
+    getLastPaymentInfo() {
+      return router.getLastPaymentInfo();
+    },
+  };
+
+  const serverCount = 1 + localClients.length; // remote + locals
+  console.log(`All available tools: ${whaleToolRouter.tools.map((t) => t.name).join(", ")}`);
   console.log(`Using model: ${config.geminiModel}`);
-  if (verbose || config.verbose) {
-    console.log("Verbose logging enabled (debug output on stderr)");
+
+  // ── Start whale tracker ────────────────────────────────────────────
+  let whaleTracker: WhaleTracker | null = null;
+  const toolNameSet = new Set(whaleToolRouter.tools.map((t) => t.name));
+  if (toolNameSet.has("getSignaturesForAddress")) {
+    whaleTracker = new WhaleTracker(whaleDb, {
+      callTool: (name, args) => whaleToolRouter.callTool(name, args, { allowPayment: false }),
+      hasTool: (name) => toolNameSet.has(name),
+    });
+    whaleTracker.start();
+    console.log("Whale tracker started.");
   }
-
-  console.log("Type your message, /help for usage info, or /quit to exit.\n");
-
-  const conversationHistory: Content[] = [];
 
   // ── Start Telegram bot (optional) ──────────────────────────────────
   let stopTelegramBot: (() => void) | undefined;
   if (config.telegramBotToken) {
     try {
-      stopTelegramBot = await startTelegramBot(config, router, cache);
+      stopTelegramBot = await startTelegramBot(config, whaleToolRouter, cache, whaleDb, whaleTracker);
     } catch (err) {
       console.error(
         "Warning: failed to start Telegram bot:",
@@ -176,38 +175,24 @@ async function main(): Promise<void> {
     }
   }
 
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
+  // ── Shutdown cleanup ───────────────────────────────────────────────
   let shuttingDown = false;
   const shutdown = async (): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
-    rl.close();
-    if (stopTelegramBot) {
-      stopTelegramBot();
-    }
-    if (rpcClient) {
-      await rpcClient.close().catch(() => {});
-    }
-    if (rugcheckClient) {
-      await rugcheckClient.close().catch(() => {});
-    }
-    if (screenerClient) {
-      await screenerClient.close().catch(() => {});
-    }
-    if (localClient) {
-      await localClient.close().catch(() => {});
-    }
+    if (whaleTracker) await whaleTracker.drain();
+    if (stopTelegramBot) stopTelegramBot();
+    if (rpcClient) await rpcClient.close().catch(() => {});
+    if (rugcheckClient) await rugcheckClient.close().catch(() => {});
+    if (screenerClient) await screenerClient.close().catch(() => {});
+    if (localClient) await localClient.close().catch(() => {});
     await mcpClient.close();
     cache.close();
+    whaleDb.close();
   };
 
   const handleSignal = () => {
     (async () => {
-      console.log("\nShutting down...");
       try {
         await shutdown();
         process.exit(0);
@@ -224,149 +209,22 @@ async function main(): Promise<void> {
   process.once("SIGINT", handleSignal);
   process.once("SIGTERM", handleSignal);
 
+  // ── Render ink UI ──────────────────────────────────────────────────
+  const { waitUntilExit } = render(
+    React.createElement(App, {
+      config,
+      router: whaleToolRouter,
+      cache,
+      whaleDb,
+      whaleTracker,
+      serverCount,
+      verbose,
+      onQuit: shutdown,
+    }),
+  );
+
   try {
-    while (!shuttingDown) {
-      let input: string;
-      try {
-        input = await rl.question("> ");
-      } catch {
-        // readline was closed (e.g., EOF or shutdown)
-        break;
-      }
-      const trimmed = input.trim();
-      if (!trimmed) continue;
-      if (trimmed === "/quit") break;
-      if (trimmed === "/help") {
-        printHelp();
-        continue;
-      }
-      if (trimmed === "/clear") {
-        conversationHistory.length = 0;
-        console.log("Conversation history cleared.");
-        continue;
-      }
-      if (trimmed === "/cache" || trimmed.startsWith("/cache ")) {
-        const parts = trimmed.split(/\s+/);
-        if (parts.length === 1) {
-          const entries = cache.list();
-          if (entries.length === 0) {
-            console.log("Token cache is empty.");
-          } else {
-            console.log(`\nCached entries (${entries.length}):\n`);
-            for (const entry of entries) {
-              const ageMs = Date.now() - entry.createdAt;
-              const ageMin = Math.round(ageMs / 60_000);
-              const ageLabel = ageMin < 1 ? "<1m" : `${ageMin}m`;
-              const addr = extractTokenAddress(JSON.parse(entry.argsJson) as Record<string, unknown>) ?? "—";
-              const staleTag = entry.stale ? " [stale]" : "";
-              console.log(`  ${entry.toolName}  ${addr}  (${ageLabel} ago)${staleTag}`);
-            }
-            console.log();
-          }
-        } else if (parts[1] === "clear") {
-          const address = parts[2];
-          const removed = cache.clear(address);
-          if (address) {
-            console.log(`Cleared ${removed} cache entries for ${address}.`);
-          } else {
-            console.log(`Cleared ${removed} cache entries.`);
-          }
-        } else {
-          console.log("Usage: /cache | /cache clear [address]");
-        }
-        continue;
-      }
-      if (trimmed === "/configure") {
-        try {
-          const changed = await runConfigure(rl);
-          if (changed) {
-            try {
-              const prev = { ...config };
-              const reloaded = reloadConfig();
-
-              // Connection-level changes still need a restart to recreate clients
-              const connectionChanged =
-                prev.remoteMcpUrl !== reloaded.remoteMcpUrl ||
-                prev.solanaPrivateKey !== reloaded.solanaPrivateKey ||
-                prev.dexTraderMcpPath !== reloaded.dexTraderMcpPath ||
-                prev.dexScreenerMcpPath !== reloaded.dexScreenerMcpPath ||
-                prev.dexRugcheckMcpPath !== reloaded.dexRugcheckMcpPath ||
-                prev.solanaRpcMcpPath !== reloaded.solanaRpcMcpPath ||
-                prev.solanaRpcUrl !== reloaded.solanaRpcUrl ||
-                prev.jupiterApiBase !== reloaded.jupiterApiBase ||
-                prev.jupiterApiKey !== reloaded.jupiterApiKey;
-
-              const telegramTokenChanged = prev.telegramBotToken !== reloaded.telegramBotToken;
-
-              // Always-safe live updates: Gemini API + model + verbosity + Telegram Chat ID
-              config.geminiApiKey = reloaded.geminiApiKey;
-              config.geminiModel = reloaded.geminiModel;
-              config.verbose = reloaded.verbose;
-              config.telegramChatId = reloaded.telegramChatId;
-              setVerbose(verbose || reloaded.verbose);
-
-              if (connectionChanged || telegramTokenChanged) {
-                if (connectionChanged) {
-                  console.log(
-                    "  ⚠️  Connection settings changed — restart with /quit && npm start to apply.",
-                  );
-                }
-                if (telegramTokenChanged) {
-                  console.log(
-                    "  ⚠️  TELEGRAM_BOT_TOKEN changed — restart required to bind to the new token.",
-                  );
-                }
-              } else {
-                // No critical changes: apply everything else (e.g. walletAddress update)
-                Object.assign(config, reloaded);
-              }
-            } catch (err) {
-              console.error(
-                "  Warning: could not reload config:",
-                err instanceof Error ? err.message : String(err),
-              );
-              console.error("  The old config will remain active until restart.");
-            }
-          }
-        } catch (err) {
-          console.error(
-            "Configuration error:",
-            err instanceof Error ? err.message : String(err),
-          );
-        }
-        continue;
-      }
-
-      try {
-        const confirmFn = async (message: string): Promise<boolean> => {
-          const answer = await rl.question(`\n⚠️  ${message} (y/N) `);
-          const normalised = answer.trim().toLowerCase();
-          const accepted = ["y", "yes", "yeah", "yep", "sure", "ok"].includes(normalised);
-          if (!accepted) {
-            console.log("Cancelled.");
-          }
-          return accepted;
-        };
-
-        const answer = await runAgent(
-          config.geminiApiKey,
-          config.geminiModel,
-          router,
-          trimmed,
-          conversationHistory,
-          config.walletAddress,
-          confirmFn,
-          "cli",
-          cache,
-        );
-        console.log(`\n${answer}\n`);
-      } catch (err) {
-        console.error(
-          "Error:",
-          err instanceof Error ? err.message : String(err),
-        );
-      }
-    }
+    await waitUntilExit();
   } finally {
     await shutdown();
   }
