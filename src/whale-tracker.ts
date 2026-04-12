@@ -65,6 +65,12 @@ export class WhaleTracker extends EventEmitter {
     this.currentBackoff = this.pollIntervalMs;
   }
 
+  /** Reset the in-memory rate-limit counter for a wallet (call after /resume). */
+  resetAlertCount(address: string): void {
+    this.alertCounts.delete(address);
+    debug(`Whale tracker: reset rate-limit counter for ${address}`);
+  }
+
   start(): void {
     if (this.running) return;
     this.running = true;
@@ -222,9 +228,14 @@ export class WhaleTracker extends EventEmitter {
 
     // Process each new signature
     let alertsThisPoll = 0;
-    for (const sig of signatures) {
+    let lastProcessedIdx = -1;
+    for (let i = 0; i < signatures.length; i++) {
       if (!this.running) break;
-      if (alertsThisPoll >= MAX_ALERTS_PER_POLL) break;
+      if (alertsThisPoll >= MAX_ALERTS_PER_POLL) {
+        debug(`Whale tracker: hit per-poll cap (${MAX_ALERTS_PER_POLL}) for ${address}, deferring ${signatures.length - i} remaining`);
+        break;
+      }
+      const sig = signatures[i];
       if (this.db.hasAlert(sig.signature)) continue;
 
       try {
@@ -241,6 +252,13 @@ export class WhaleTracker extends EventEmitter {
       } catch (err) {
         debug(`Failed to parse tx ${sig.signature}: ${err instanceof Error ? err.message : String(err)}`);
       }
+      lastProcessedIdx = i;
+    }
+
+    // If we hit the per-poll cap, roll back cursor to last processed signature
+    // so unprocessed ones are retried next poll
+    if (lastProcessedIdx >= 0 && lastProcessedIdx < signatures.length - 1) {
+      this.db.setCursor(address, signatures[lastProcessedIdx].signature);
     }
   }
 

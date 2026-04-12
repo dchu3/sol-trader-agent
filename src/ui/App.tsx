@@ -294,6 +294,9 @@ export function App({
             return true;
           }
           const resumed = whaleDb.resumeWallet(addr);
+          if (resumed && whaleTracker) {
+            whaleTracker.resetAlertCount(addr);
+          }
           addMessage("system", resumed ? `▶️ Resumed tracking for ${addr}` : `${addr} is not watched or not paused.`);
           return true;
         }

@@ -175,6 +175,9 @@ export async function startTelegramBot(
       return;
     }
     const resumed = whaleDb.resumeWallet(addr);
+    if (resumed && whaleTracker) {
+      whaleTracker.resetAlertCount(addr);
+    }
     await ctx.reply(resumed ? `▶️ Resumed tracking for ${addr}` : `${addr} is not watched or not paused.`);
   });
 
