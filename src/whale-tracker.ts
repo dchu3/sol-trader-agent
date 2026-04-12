@@ -18,6 +18,9 @@ const SOL_MINT = "So11111111111111111111111111111111111111112";
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
 const BACKOFF_MULTIPLIER = 2;
 const MAX_BACKOFF_MS = 5 * 60 * 1000;
+const MAX_ALERTS_PER_WINDOW = 15;
+const MAX_ALERTS_PER_POLL = 20;
+const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 
 export interface WhaleTrackerConfig {
   pollIntervalMs?: number;
@@ -31,6 +34,18 @@ export interface WhaleSwapEvent {
   alert: Omit<WhaleAlert, "alertedAt">;
 }
 
+export interface WhaleRateLimitEvent {
+  address: string;
+  label: string;
+  count: number;
+}
+
+export interface WhaleWalletPausedEvent {
+  address: string;
+  label: string;
+  reason: string;
+}
+
 export class WhaleTracker extends EventEmitter {
   private db: WhaleDb;
   private config: WhaleTrackerConfig;
@@ -40,6 +55,7 @@ export class WhaleTracker extends EventEmitter {
   private running = false;
   private polling = false;
   private pollPromise: Promise<void> | null = null;
+  private alertCounts = new Map<string, { count: number; windowStart: number }>();
 
   constructor(db: WhaleDb, config: WhaleTrackerConfig) {
     super();
@@ -92,7 +108,7 @@ export class WhaleTracker extends EventEmitter {
     this.polling = true;
 
     try {
-      const wallets = this.db.listWallets();
+      const wallets = this.db.listActiveWallets();
       if (wallets.length === 0) {
         this.currentBackoff = this.pollIntervalMs;
         return;
@@ -136,6 +152,21 @@ export class WhaleTracker extends EventEmitter {
   }
 
   private async pollWallet(address: string, label: string): Promise<void> {
+    const now = Date.now();
+    const entry = this.alertCounts.get(address);
+    if (entry) {
+      if (now - entry.windowStart >= RATE_LIMIT_WINDOW_MS) {
+        this.alertCounts.set(address, { count: 0, windowStart: now });
+      } else if (entry.count >= MAX_ALERTS_PER_WINDOW) {
+        this.emit("rate-limited", { address, label, count: entry.count } satisfies WhaleRateLimitEvent);
+        this.db.pauseWallet(address);
+        this.emit("wallet-paused", { address, label, reason: "rate-limited" } satisfies WhaleWalletPausedEvent);
+        return;
+      }
+    } else {
+      this.alertCounts.set(address, { count: 0, windowStart: now });
+    }
+
     const cursor = this.db.getCursor(address);
     const limit = 20;
     const args: Record<string, unknown> = {
@@ -190,8 +221,10 @@ export class WhaleTracker extends EventEmitter {
     this.db.setCursor(address, signatures[0].signature);
 
     // Process each new signature
+    let alertsThisPoll = 0;
     for (const sig of signatures) {
       if (!this.running) break;
+      if (alertsThisPoll >= MAX_ALERTS_PER_POLL) break;
       if (this.db.hasAlert(sig.signature)) continue;
 
       try {
@@ -201,6 +234,9 @@ export class WhaleTracker extends EventEmitter {
           this.emit("alert", {
             alert: swap,
           } satisfies WhaleSwapEvent);
+          alertsThisPoll++;
+          const entry = this.alertCounts.get(address);
+          if (entry) entry.count++;
         }
       } catch (err) {
         debug(`Failed to parse tx ${sig.signature}: ${err instanceof Error ? err.message : String(err)}`);
