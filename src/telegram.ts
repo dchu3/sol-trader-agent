@@ -500,6 +500,8 @@ export async function startTelegramBot(
         bot.api.sendMessage(targetChatId, msg, { parse_mode: "HTML" }).catch((err) => {
           debug(`Failed to forward whale alert to Telegram: ${err instanceof Error ? err.message : String(err)}`);
         });
+      } else {
+        debug("Whale alert not forwarded to Telegram: TELEGRAM_CHAT_ID is not set");
       }
     };
 

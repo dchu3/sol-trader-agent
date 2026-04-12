@@ -148,8 +148,8 @@ export function App({
         case "/watch": {
           const parts = argStr.trim().split(/\s+/);
           const addr = parts[0];
-          if (!addr) {
-            addMessage("system", "Usage: /watch <address> [label]");
+          if (!addr || addr.length < 32) {
+            addMessage("system", "Usage: /watch <wallet_address> [label]\nAddress must be at least 32 characters.");
             return true;
           }
           const label = parts.slice(1).join(" ");
@@ -195,7 +195,7 @@ export function App({
         }
 
         case "/configure":
-          addMessage("system", "Configuration is currently only available via the original CLI. Restart with `node dist/index.js --legacy` for /configure support.");
+          addMessage("system", "Runtime configuration is not yet supported in the ink UI. Edit your .env file and restart the agent to change settings.");
           return true;
 
         default:

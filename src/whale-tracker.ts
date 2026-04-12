@@ -39,6 +39,7 @@ export class WhaleTracker extends EventEmitter {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
   private polling = false;
+  private pollPromise: Promise<void> | null = null;
 
   constructor(db: WhaleDb, config: WhaleTrackerConfig) {
     super();
@@ -65,6 +66,14 @@ export class WhaleTracker extends EventEmitter {
     debug("Whale tracker stopped");
   }
 
+  /** Wait for any in-flight poll to finish before closing resources. */
+  async drain(): Promise<void> {
+    this.stop();
+    if (this.pollPromise) {
+      await this.pollPromise;
+    }
+  }
+
   isRunning(): boolean {
     return this.running;
   }
@@ -72,7 +81,7 @@ export class WhaleTracker extends EventEmitter {
   private schedulePoll(delayMs: number): void {
     if (!this.running) return;
     this.timer = setTimeout(() => {
-      this.pollAll().catch((err) => {
+      this.pollPromise = this.pollAll().catch((err) => {
         debug(`Whale tracker poll error: ${err instanceof Error ? err.message : String(err)}`);
       });
     }, delayMs);
@@ -119,18 +128,19 @@ export class WhaleTracker extends EventEmitter {
       }
 
       // Purge old alerts periodically
-      this.db.purgeOldAlerts();
+      if (this.running) this.db.purgeOldAlerts();
     } finally {
       this.polling = false;
-      this.schedulePoll(this.currentBackoff);
+      if (this.running) this.schedulePoll(this.currentBackoff);
     }
   }
 
   private async pollWallet(address: string, label: string): Promise<void> {
     const cursor = this.db.getCursor(address);
+    const limit = 20;
     const args: Record<string, unknown> = {
       address,
-      limit: 20,
+      limit,
     };
     if (cursor) {
       args.until = cursor;
@@ -143,18 +153,45 @@ export class WhaleTracker extends EventEmitter {
       const parsed = JSON.parse(resultText);
       signatures = Array.isArray(parsed) ? parsed : [];
     } catch {
-      // Try to extract signatures from text format
       const sigMatches = resultText.match(/[A-Za-z0-9]{87,88}/g);
       signatures = (sigMatches ?? []).map((s) => ({ signature: s }));
     }
 
     if (signatures.length === 0) return;
 
+    // First poll: seed cursor without processing historical transactions
+    if (!cursor) {
+      this.db.setCursor(address, signatures[0].signature);
+      debug(`Whale tracker: seeded cursor for ${address}, skipping ${signatures.length} historical tx(s)`);
+      return;
+    }
+
+    // Paginate: fetch remaining signatures if we hit the limit
+    while (signatures.length > 0 && signatures.length % limit === 0 && this.running) {
+      const lastSig = signatures[signatures.length - 1].signature;
+      const moreText = await this.config.callTool("getSignaturesForAddress", {
+        address,
+        limit,
+        before: lastSig,
+        until: cursor,
+      });
+      let moreSigs: Array<{ signature: string; blockTime?: number }>;
+      try {
+        const parsed = JSON.parse(moreText);
+        moreSigs = Array.isArray(parsed) ? parsed : [];
+      } catch {
+        break;
+      }
+      if (moreSigs.length === 0) break;
+      signatures.push(...moreSigs);
+    }
+
     // Update cursor to newest signature
     this.db.setCursor(address, signatures[0].signature);
 
     // Process each new signature
     for (const sig of signatures) {
+      if (!this.running) break;
       if (this.db.hasAlert(sig.signature)) continue;
 
       try {
@@ -197,7 +234,9 @@ export class WhaleTracker extends EventEmitter {
 
     let tx: Record<string, unknown>;
     try {
-      tx = JSON.parse(txText);
+      const parsed = JSON.parse(txText);
+      if (!parsed || typeof parsed !== "object") return null;
+      tx = parsed as Record<string, unknown>;
     } catch {
       return null;
     }
@@ -262,6 +301,27 @@ export class WhaleTracker extends EventEmitter {
         action = "sell";
         tokenAddress = mint;
         break;
+      }
+    }
+
+    // Detect full sells: tokens in preBalances but absent from postBalances (ATA closed)
+    if (tokenAddress === "unknown") {
+      for (const pre of preBalances) {
+        const mint = pre.mint as string;
+        if (mint === SOL_MINT) continue;
+
+        const owner = pre.owner as string;
+        if (owner !== walletAddress) continue;
+
+        const preAmount = parseFloat((pre.uiTokenAmount as Record<string, unknown>)?.uiAmountString as string ?? "0");
+        if (preAmount <= 0) continue;
+
+        const inPost = postBalances.some((p) => (p.mint as string) === mint && (p.owner as string) === walletAddress);
+        if (!inPost) {
+          action = "sell";
+          tokenAddress = mint;
+          break;
+        }
       }
     }
 

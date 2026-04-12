@@ -180,7 +180,7 @@ async function main(): Promise<void> {
   const shutdown = async (): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
-    if (whaleTracker) whaleTracker.stop();
+    if (whaleTracker) await whaleTracker.drain();
     if (stopTelegramBot) stopTelegramBot();
     if (rpcClient) await rpcClient.close().catch(() => {});
     if (rugcheckClient) await rugcheckClient.close().catch(() => {});
