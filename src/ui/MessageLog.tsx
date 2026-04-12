@@ -59,7 +59,7 @@ export function MessageLog({ messages, maxVisible = 50 }: MessageLogProps): Reac
   const visible = messages.slice(-maxVisible);
 
   return (
-    <Box flexDirection="column" flexGrow={1} overflow="hidden">
+    <Box flexDirection="column" flexGrow={1} overflow="hidden" justifyContent="flex-end">
       {visible.length === 0 ? (
         <Box paddingX={1} paddingY={1}>
           <Text dimColor>

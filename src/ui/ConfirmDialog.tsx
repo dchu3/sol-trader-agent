@@ -22,7 +22,7 @@ export function ConfirmDialog({ message, onResolve }: ConfirmDialogProps): React
   });
 
   return (
-    <Box flexDirection="column" paddingX={1} borderStyle="round" borderColor="yellow">
+    <Box flexDirection="column" paddingX={1} borderStyle="round" borderColor="yellow" flexShrink={0}>
       <Text color="yellow" bold>
         ⚠️  {message}
       </Text>
