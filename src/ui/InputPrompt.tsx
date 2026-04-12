@@ -15,7 +15,6 @@ interface EditorState {
 type EditorAction =
   | { type: "insert"; text: string }
   | { type: "backspace" }
-  | { type: "delete" }
   | { type: "left" }
   | { type: "right" }
   | { type: "home" }
@@ -38,12 +37,6 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
       return {
         value: value.slice(0, cursor - 1) + value.slice(cursor),
         cursor: cursor - 1,
-      };
-    case "delete":
-      if (cursor >= value.length) return state;
-      return {
-        value: value.slice(0, cursor) + value.slice(cursor + 1),
-        cursor,
       };
     case "left":
       return cursor > 0 ? { ...state, cursor: cursor - 1 } : state;
@@ -94,13 +87,10 @@ export function InputPrompt({
       if (key.leftArrow) { dispatch({ type: "left" }); return; }
       if (key.rightArrow) { dispatch({ type: "right" }); return; }
 
-      if (key.backspace) {
+      // ink v6 maps physical Backspace (0x7f) to key.delete, not key.backspace.
+      // key.backspace only fires for Ctrl+H (0x08). Handle both as backspace.
+      if (key.backspace || key.delete) {
         dispatch({ type: "backspace" });
-        return;
-      }
-
-      if (key.delete) {
-        dispatch({ type: "delete" });
         return;
       }
 
