@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
-import { Box, useApp } from "ink";
+import { Box, useApp, useStdout } from "ink";
 import type { Content } from "@google/genai";
 import type { ToolRouter, ConfirmFn, Channel } from "../agent.js";
 import { runAgent } from "../agent.js";
@@ -16,6 +16,7 @@ import { Header } from "./Header.js";
 import { MessageLog } from "./MessageLog.js";
 import type { Message } from "./MessageLog.js";
 import { InputPrompt } from "./InputPrompt.js";
+import type { CommandDef } from "./InputPrompt.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import { Spinner } from "./Spinner.js";
 import { AlertPanel } from "./AlertPanel.js";
@@ -31,6 +32,20 @@ export interface AppProps {
   onQuit: () => Promise<void>;
 }
 
+const SLASH_COMMANDS: CommandDef[] = [
+  { name: "/help", description: "Show all commands" },
+  { name: "/clear", description: "Clear conversation" },
+  { name: "/cache", description: "Show token cache" },
+  { name: "/watch", description: "Watch a whale wallet" },
+  { name: "/unwatch", description: "Stop watching a wallet" },
+  { name: "/whales", description: "List wallets & alerts" },
+  { name: "/purge", description: "Remove wallet + all data" },
+  { name: "/pause", description: "Pause wallet tracking" },
+  { name: "/resume", description: "Resume wallet tracking" },
+  { name: "/configure", description: "View/update settings" },
+  { name: "/quit", description: "Exit the agent" },
+];
+
 export function App({
   config,
   router,
@@ -42,6 +57,8 @@ export function App({
   onQuit,
 }: AppProps): React.JSX.Element {
   const { exit } = useApp();
+  const { stdout } = useStdout();
+  const [termHeight, setTermHeight] = useState(stdout?.rows ?? 24);
   const [messages, setMessages] = useState<Message[]>([]);
   const [processing, setProcessing] = useState(false);
   const [pendingConfirm, setPendingConfirm] = useState<{
@@ -57,6 +74,14 @@ export function App({
 
   const alertBufferRef = useRef<WhaleSwapEvent[]>([]);
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Track terminal resize
+  useEffect(() => {
+    if (!stdout) return;
+    const onResize = () => setTermHeight(stdout.rows);
+    stdout.on("resize", onResize);
+    return () => { stdout.off("resize", onResize); };
+  }, [stdout]);
 
   // Subscribe to whale alerts (batched), rate-limited, and wallet-paused events
   useEffect(() => {
@@ -370,7 +395,7 @@ export function App({
   );
 
   return (
-    <Box flexDirection="column" minHeight={20}>
+    <Box flexDirection="column" height={termHeight}>
       <Header
         walletAddress={config.walletAddress}
         modelName={config.geminiModel}
@@ -392,10 +417,11 @@ export function App({
             />
           )}
 
-          <Box borderStyle="single" borderColor="gray" borderTop borderBottom={false} borderLeft={false} borderRight={false} height={3} flexShrink={0}>
+          <Box borderStyle="single" borderColor="gray" borderTop borderBottom={false} borderLeft={false} borderRight={false} flexShrink={0}>
             <InputPrompt
               onSubmit={handleSubmit}
               disabled={processing}
+              commands={SLASH_COMMANDS}
             />
           </Box>
         </Box>

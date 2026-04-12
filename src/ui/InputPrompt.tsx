@@ -1,10 +1,16 @@
-import React, { useReducer, useState, useRef } from "react";
+import React, { useReducer, useState, useRef, useMemo } from "react";
 import { Box, Text, useInput } from "ink";
+
+export interface CommandDef {
+  name: string;
+  description: string;
+}
 
 interface InputPromptProps {
   onSubmit: (text: string) => void;
   disabled?: boolean;
   placeholder?: string;
+  commands?: CommandDef[];
 }
 
 interface EditorState {
@@ -57,15 +63,44 @@ export function InputPrompt({
   onSubmit,
   disabled = false,
   placeholder = "Type a message or /help...",
+  commands = [],
 }: InputPromptProps): React.JSX.Element {
   const [editor, dispatch] = useReducer(editorReducer, { value: "", cursor: 0 });
   const [historyStack, setHistoryStack] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
+  const [selectedSuggestion, setSelectedSuggestion] = useState(0);
+  const [suggestionsDismissed, setSuggestionsDismissed] = useState(false);
   const savedDraft = useRef("");
+
+  const MAX_VISIBLE = 6;
+
+  const suggestions = useMemo(() => {
+    const val = editor.value;
+    if (!val.startsWith("/") || val.includes(" ") || commands.length === 0) return [];
+    const prefix = val.toLowerCase();
+    return commands.filter((c) => c.name.toLowerCase().startsWith(prefix));
+  }, [editor.value, commands]);
+
+  // Reset dismissed state when input changes (new characters re-open suggestions)
+  const lastValueForDismiss = useRef(editor.value);
+  if (editor.value !== lastValueForDismiss.current) {
+    lastValueForDismiss.current = editor.value;
+    if (suggestionsDismissed) setSuggestionsDismissed(false);
+  }
+
+  const showSuggestions = suggestions.length > 0 && !disabled && !suggestionsDismissed;
 
   useInput(
     (input, key) => {
       if (disabled) return;
+
+      if (key.tab && showSuggestions) {
+        const idx = Math.min(selectedSuggestion, Math.min(suggestions.length, MAX_VISIBLE) - 1);
+        const completed = suggestions[idx].name + " ";
+        dispatch({ type: "set", value: completed });
+        setSelectedSuggestion(0);
+        return;
+      }
 
       if (key.return) {
         const trimmed = editor.value.trim();
@@ -75,6 +110,7 @@ export function InputPrompt({
           savedDraft.current = "";
           onSubmit(trimmed);
           dispatch({ type: "clear" });
+          setSelectedSuggestion(0);
         }
         return;
       }
@@ -91,10 +127,15 @@ export function InputPrompt({
       // key.backspace only fires for Ctrl+H (0x08). Handle both as backspace.
       if (key.backspace || key.delete) {
         dispatch({ type: "backspace" });
+        setSelectedSuggestion(0);
         return;
       }
 
       if (key.upArrow) {
+        if (showSuggestions) {
+          setSelectedSuggestion((prev) => Math.max(0, prev - 1));
+          return;
+        }
         if (historyStack.length === 0) return;
         setHistoryIndex((prev) => {
           if (prev === -1) {
@@ -108,6 +149,10 @@ export function InputPrompt({
       }
 
       if (key.downArrow) {
+        if (showSuggestions) {
+          setSelectedSuggestion((prev) => Math.min(Math.min(suggestions.length, MAX_VISIBLE) - 1, prev + 1));
+          return;
+        }
         setHistoryIndex((prev) => {
           if (prev <= 0) {
             if (prev === 0) {
@@ -122,12 +167,19 @@ export function InputPrompt({
         return;
       }
 
+      if (key.escape) {
+        setSelectedSuggestion(0);
+        setSuggestionsDismissed(true);
+        return;
+      }
+
       // Ignore other control/meta sequences
-      if (key.ctrl || key.meta || key.escape || key.tab) return;
+      if (key.ctrl || key.meta || key.tab) return;
 
       if (input) {
         dispatch({ type: "insert", text: input });
         setHistoryIndex(-1);
+        setSelectedSuggestion(0);
       }
     },
   );
@@ -157,11 +209,28 @@ export function InputPrompt({
   };
 
   return (
-    <Box paddingX={1}>
-      <Text color="blue" bold>
-        {">"}{" "}
-      </Text>
-      {renderInput()}
+    <Box flexDirection="column" paddingX={1}>
+      {showSuggestions && (
+        <Box flexDirection="column" marginBottom={0}>
+          {suggestions.slice(0, 6).map((cmd, idx) => (
+            <Text key={cmd.name}>
+              {idx === selectedSuggestion ? (
+                <Text color="cyan" bold>❯ {cmd.name}</Text>
+              ) : (
+                <Text dimColor>  {cmd.name}</Text>
+              )}
+              <Text dimColor>  {cmd.description}</Text>
+            </Text>
+          ))}
+          <Text dimColor>  ↑↓ navigate  Tab complete  Esc dismiss</Text>
+        </Box>
+      )}
+      <Box>
+        <Text color="blue" bold>
+          {">"}{" "}
+        </Text>
+        {renderInput()}
+      </Box>
     </Box>
   );
 }
