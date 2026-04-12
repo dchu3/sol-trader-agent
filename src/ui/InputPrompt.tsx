@@ -69,7 +69,10 @@ export function InputPrompt({
   const [historyStack, setHistoryStack] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [selectedSuggestion, setSelectedSuggestion] = useState(0);
+  const [suggestionsDismissed, setSuggestionsDismissed] = useState(false);
   const savedDraft = useRef("");
+
+  const MAX_VISIBLE = 6;
 
   const suggestions = useMemo(() => {
     const val = editor.value;
@@ -78,14 +81,21 @@ export function InputPrompt({
     return commands.filter((c) => c.name.toLowerCase().startsWith(prefix));
   }, [editor.value, commands]);
 
-  const showSuggestions = suggestions.length > 0 && !disabled;
+  // Reset dismissed state when input changes (new characters re-open suggestions)
+  const lastValueForDismiss = useRef(editor.value);
+  if (editor.value !== lastValueForDismiss.current) {
+    lastValueForDismiss.current = editor.value;
+    if (suggestionsDismissed) setSuggestionsDismissed(false);
+  }
+
+  const showSuggestions = suggestions.length > 0 && !disabled && !suggestionsDismissed;
 
   useInput(
     (input, key) => {
       if (disabled) return;
 
       if (key.tab && showSuggestions) {
-        const idx = Math.min(selectedSuggestion, suggestions.length - 1);
+        const idx = Math.min(selectedSuggestion, Math.min(suggestions.length, MAX_VISIBLE) - 1);
         const completed = suggestions[idx].name + " ";
         dispatch({ type: "set", value: completed });
         setSelectedSuggestion(0);
@@ -117,6 +127,7 @@ export function InputPrompt({
       // key.backspace only fires for Ctrl+H (0x08). Handle both as backspace.
       if (key.backspace || key.delete) {
         dispatch({ type: "backspace" });
+        setSelectedSuggestion(0);
         return;
       }
 
@@ -139,7 +150,7 @@ export function InputPrompt({
 
       if (key.downArrow) {
         if (showSuggestions) {
-          setSelectedSuggestion((prev) => Math.min(suggestions.length - 1, prev + 1));
+          setSelectedSuggestion((prev) => Math.min(Math.min(suggestions.length, MAX_VISIBLE) - 1, prev + 1));
           return;
         }
         setHistoryIndex((prev) => {
@@ -158,6 +169,7 @@ export function InputPrompt({
 
       if (key.escape) {
         setSelectedSuggestion(0);
+        setSuggestionsDismissed(true);
         return;
       }
 
