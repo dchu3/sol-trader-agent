@@ -93,6 +93,11 @@ export function App({
     return Math.max(4, termHeight - used);
   }, [termHeight, processing, pendingConfirm]);
 
+  // Effective columns for MessageLog text wrapping (AlertPanel takes 50 cols when visible)
+  const effectiveColumns = useMemo(() => {
+    return whaleAlerts.length > 0 ? Math.max(40, termColumns - 50) : termColumns;
+  }, [termColumns, whaleAlerts.length]);
+
   // Subscribe to whale alerts (batched), rate-limited, and wallet-paused events
   useEffect(() => {
     if (!whaleTracker) return;
@@ -416,7 +421,7 @@ export function App({
 
       <Box flexDirection="row" flexGrow={1}>
         <Box flexDirection="column" flexGrow={1}>
-          <MessageLog messages={messages} availableRows={messageRows} termColumns={termColumns} />
+          <MessageLog messages={messages} availableRows={messageRows} termColumns={effectiveColumns} />
 
           {processing && !pendingConfirm && <Spinner />}
 

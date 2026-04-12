@@ -85,10 +85,12 @@ export function MessageLog({
     const recent = messages.slice(-maxVisible);
     let usedRows = 0;
     let startIdx = recent.length;
+    // Reserve 1 row for the "↑ N older messages" indicator when messages will be hidden
+    const budget = recent.length > 0 ? availableRows - 1 : availableRows;
 
     for (let i = recent.length - 1; i >= 0; i--) {
       const h = estimateHeight(recent[i], termColumns);
-      if (usedRows + h > availableRows && startIdx < recent.length) break;
+      if (usedRows + h > budget && startIdx < recent.length) break;
       usedRows += h;
       startIdx = i;
     }
