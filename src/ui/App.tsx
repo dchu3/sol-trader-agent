@@ -55,32 +55,94 @@ export function App({
   const historyRef = useRef<Content[]>([]);
   const configRef = useRef(config);
 
-  // Subscribe to whale alerts
+  const alertBufferRef = useRef<WhaleSwapEvent[]>([]);
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Subscribe to whale alerts (batched), rate-limited, and wallet-paused events
   useEffect(() => {
     if (!whaleTracker) return;
 
-    const handler = (event: WhaleSwapEvent) => {
-      const fullAlert: WhaleAlert = {
-        ...event.alert,
+    const flushAlertBuffer = () => {
+      const buffered = alertBufferRef.current;
+      if (buffered.length === 0) return;
+      alertBufferRef.current = [];
+      flushTimerRef.current = null;
+
+      const fullAlerts: WhaleAlert[] = buffered.map((e) => ({
+        ...e.alert,
         alertedAt: Date.now(),
-      };
-      setWhaleAlerts((prev) => [fullAlert, ...prev].slice(0, 50));
-      const label = fullAlert.walletLabel || fullAlert.walletAddress.slice(0, 8) + "...";
-      const token = fullAlert.tokenSymbol || fullAlert.tokenAddress.slice(0, 8) + "...";
-      const action = fullAlert.action === "buy" ? "🟢 BUY" : fullAlert.action === "sell" ? "🔴 SELL" : "⚪ ???";
+      }));
+      setWhaleAlerts((prev) => [...fullAlerts, ...prev].slice(0, 50));
+
+      if (fullAlerts.length === 1) {
+        const a = fullAlerts[0];
+        const label = a.walletLabel || a.walletAddress.slice(0, 8) + "...";
+        const token = a.tokenSymbol || a.tokenAddress.slice(0, 8) + "...";
+        const action = a.action === "buy" ? "🟢 BUY" : a.action === "sell" ? "🔴 SELL" : "⚪ ???";
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "system" as const,
+            text: `🐋 Whale Alert: ${action} ${label} → ${token} (${a.solAmount} SOL)`,
+            timestamp: Date.now(),
+          },
+        ]);
+      } else {
+        const buys = fullAlerts.filter((a) => a.action === "buy").length;
+        const sells = fullAlerts.filter((a) => a.action === "sell").length;
+        const label = fullAlerts[0].walletLabel || fullAlerts[0].walletAddress.slice(0, 8) + "...";
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "system" as const,
+            text: `🐋 ${fullAlerts.length} whale alerts: ${buys} buys, ${sells} sell${sells !== 1 ? "s" : ""} from ${label} (see /whales for details)`,
+            timestamp: Date.now(),
+          },
+        ]);
+      }
+    };
+
+    const handler = (event: WhaleSwapEvent) => {
+      alertBufferRef.current.push(event);
+      if (flushTimerRef.current !== null) {
+        clearTimeout(flushTimerRef.current);
+      }
+      flushTimerRef.current = setTimeout(flushAlertBuffer, 2000);
+    };
+
+    const rateLimitedHandler = ({ label, address, count }: { label: string; address: string; count: number }) => {
       setMessages((prev) => [
         ...prev,
         {
           role: "system" as const,
-          text: `🐋 Whale Alert: ${action} ${label} → ${token} (${fullAlert.solAmount} SOL)`,
+          text: `⚠️ Wallet "${label}" (${address}) is generating too many alerts (${count} in 5min) — auto-pausing.`,
+          timestamp: Date.now(),
+        },
+      ]);
+    };
+
+    const walletPausedHandler = ({ label, address }: { label: string; address: string }) => {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "system" as const,
+          text: `⏸️ Wallet "${label}" (${address}) has been paused. Use /resume <addr> to re-enable.`,
           timestamp: Date.now(),
         },
       ]);
     };
 
     whaleTracker.on("alert", handler);
+    whaleTracker.on("rate-limited", rateLimitedHandler);
+    whaleTracker.on("wallet-paused", walletPausedHandler);
     return () => {
       whaleTracker.off("alert", handler);
+      whaleTracker.off("rate-limited", rateLimitedHandler);
+      whaleTracker.off("wallet-paused", walletPausedHandler);
+      if (flushTimerRef.current !== null) {
+        clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
     };
   }, [whaleTracker]);
 
@@ -107,6 +169,9 @@ export function App({
             "  /watch <addr> [label]  Watch a whale wallet",
             "  /unwatch <addr>  Stop watching a wallet",
             "  /whales     List watched wallets & alerts",
+            "  /purge <addr>  Remove wallet, alerts, and tracking cursor",
+            "  /pause <addr>  Pause tracking for a wallet",
+            "  /resume <addr>  Resume tracking for a wallet",
             "  /configure  View/update settings",
             "  /quit       Exit",
           ].join("\n"));
@@ -180,7 +245,8 @@ export function App({
             ? ["  No wallets being watched."]
             : wallets.map((w) => {
               const l = w.label ? ` (${w.label})` : "";
-              return `  ${w.address}${l}`;
+              const status = w.paused ? " [PAUSED]" : "";
+              return `  ${w.address}${l}${status}`;
             });
           const alertLines = alerts.length === 0
             ? ["  No alerts yet."]
@@ -191,6 +257,47 @@ export function App({
               return `  ${action} ${label} → ${token} (${a.solAmount} SOL)`;
             });
           addMessage("system", `🐋 Watched Wallets (${wallets.length}):\n${walletLines.join("\n")}\n\nRecent Alerts (${alerts.length}):\n${alertLines.join("\n")}`);
+          return true;
+        }
+
+        case "/purge": {
+          const addr = argStr.trim();
+          if (!addr) {
+            addMessage("system", "Usage: /purge <address>");
+            return true;
+          }
+          const removed = whaleDb.removeWallet(addr);
+          if (removed) {
+            setWhaleAlerts((prev) => prev.filter((a) => a.walletAddress !== addr));
+            addMessage("system", `🗑️ Purged wallet ${addr} — removed wallet, alerts, and tracking cursor.`);
+          } else {
+            addMessage("system", `Wallet ${addr} was not found in the watch list.`);
+          }
+          return true;
+        }
+
+        case "/pause": {
+          const addr = argStr.trim();
+          if (!addr) {
+            addMessage("system", "Usage: /pause <address>");
+            return true;
+          }
+          const paused = whaleDb.pauseWallet(addr);
+          addMessage("system", paused ? `⏸️ Paused tracking for ${addr}` : `${addr} is not watched or already paused.`);
+          return true;
+        }
+
+        case "/resume": {
+          const addr = argStr.trim();
+          if (!addr) {
+            addMessage("system", "Usage: /resume <address>");
+            return true;
+          }
+          const resumed = whaleDb.resumeWallet(addr);
+          if (resumed && whaleTracker) {
+            whaleTracker.resetAlertCount(addr);
+          }
+          addMessage("system", resumed ? `▶️ Resumed tracking for ${addr}` : `${addr} is not watched or not paused.`);
           return true;
         }
 

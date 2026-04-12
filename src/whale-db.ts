@@ -22,6 +22,7 @@ export interface WatchedWallet {
   address: string;
   label: string;
   addedAt: number;
+  paused: boolean;
 }
 
 export interface WhaleAlert {
@@ -52,7 +53,8 @@ export class WhaleDb {
       CREATE TABLE IF NOT EXISTS watched_wallets (
         address    TEXT PRIMARY KEY,
         label      TEXT NOT NULL DEFAULT '',
-        added_at   INTEGER NOT NULL
+        added_at   INTEGER NOT NULL,
+        paused     INTEGER NOT NULL DEFAULT 0
       );
 
       CREATE TABLE IF NOT EXISTS whale_alerts (
@@ -75,6 +77,14 @@ export class WhaleDb {
         last_signature TEXT NOT NULL
       );
     `);
+
+    // Migrate existing DBs: add paused column if missing
+    const cols = this.db.pragma("table_info(watched_wallets)") as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "paused")) {
+      this.db.exec("ALTER TABLE watched_wallets ADD COLUMN paused INTEGER NOT NULL DEFAULT 0");
+      debug("Whale DB: migrated watched_wallets — added paused column");
+    }
+
     debug(`Whale DB opened at ${resolvedPath}`);
   }
 
@@ -98,7 +108,8 @@ export class WhaleDb {
       .run(address);
     if (info.changes > 0) {
       this.db.prepare("DELETE FROM whale_tx_cursor WHERE wallet_address = ?").run(address);
-      debug(`Whale DB: removed wallet ${address}`);
+      this.db.prepare("DELETE FROM whale_alerts WHERE wallet_address = ?").run(address);
+      debug(`Whale DB: removed wallet ${address} and associated alerts`);
       return true;
     }
     return false;
@@ -106,13 +117,47 @@ export class WhaleDb {
 
   listWallets(): WatchedWallet[] {
     const rows = this.db
-      .prepare("SELECT address, label, added_at FROM watched_wallets ORDER BY added_at DESC")
-      .all() as Array<{ address: string; label: string; added_at: number }>;
+      .prepare("SELECT address, label, added_at, paused FROM watched_wallets ORDER BY added_at DESC")
+      .all() as Array<{ address: string; label: string; added_at: number; paused: number }>;
     return rows.map((r) => ({
       address: r.address,
       label: r.label,
       addedAt: r.added_at,
+      paused: r.paused === 1,
     }));
+  }
+
+  listActiveWallets(): WatchedWallet[] {
+    return this.listWallets().filter((w) => !w.paused);
+  }
+
+  pauseWallet(address: string): boolean {
+    const info = this.db
+      .prepare("UPDATE watched_wallets SET paused = 1 WHERE address = ? AND paused = 0")
+      .run(address);
+    if (info.changes > 0) {
+      debug(`Whale DB: paused wallet ${address}`);
+      return true;
+    }
+    return false;
+  }
+
+  resumeWallet(address: string): boolean {
+    const info = this.db
+      .prepare("UPDATE watched_wallets SET paused = 0 WHERE address = ? AND paused = 1")
+      .run(address);
+    if (info.changes > 0) {
+      debug(`Whale DB: resumed wallet ${address}`);
+      return true;
+    }
+    return false;
+  }
+
+  alertCountSince(walletAddress: string, sinceMs: number): number {
+    const row = this.db
+      .prepare("SELECT COUNT(*) as cnt FROM whale_alerts WHERE wallet_address = ? AND alerted_at >= ?")
+      .get(walletAddress, sinceMs) as { cnt: number };
+    return row.cnt;
   }
 
   getWalletLabel(address: string): string {
