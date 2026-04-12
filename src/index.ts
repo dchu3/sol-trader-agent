@@ -20,7 +20,7 @@ async function main(): Promise<void> {
   const verbose =
     process.argv.includes("--verbose") || process.argv.includes("-v");
   const headless =
-    process.argv.includes("--headless") || (!process.stdin.isTTY && !process.stdout.isTTY);
+    process.argv.includes("--headless") || !process.stdin.isTTY || !process.stdout.isTTY;
   const config: Config = loadConfig();
   setVerbose(verbose || config.verbose);
 
@@ -217,11 +217,12 @@ async function main(): Promise<void> {
     if (!stopTelegramBot && !whaleTracker) {
       console.warn("⚠️  No Telegram bot or whale tracker active — headless mode has nothing to do.");
       console.warn("   Set TELEGRAM_BOT_TOKEN in .env or use an interactive terminal.");
-    } else {
-      if (stopTelegramBot) console.log("Telegram bot is active. Send messages via Telegram.");
-      if (whaleTracker) console.log("Whale tracker is active. Alerts will be forwarded to Telegram.");
-      console.log("Press Ctrl+C to stop.");
+      await shutdown();
+      process.exit(1);
     }
+    if (stopTelegramBot) console.log("Telegram bot is active. Send messages via Telegram.");
+    if (whaleTracker) console.log("Whale tracker is active. Alerts will be forwarded to Telegram.");
+    console.log("Press Ctrl+C to stop.");
     // Block until a signal terminates the process
     await new Promise<void>(() => {});
   }
