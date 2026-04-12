@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from "react";
+import React, { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { Box, useApp, useStdout } from "ink";
 import type { Content } from "@google/genai";
 import type { ToolRouter, ConfirmFn, Channel } from "../agent.js";
@@ -59,6 +59,7 @@ export function App({
   const { exit } = useApp();
   const { stdout } = useStdout();
   const [termHeight, setTermHeight] = useState(stdout?.rows ?? 24);
+  const [termColumns, setTermColumns] = useState(stdout?.columns ?? 80);
   const [messages, setMessages] = useState<Message[]>([]);
   const [processing, setProcessing] = useState(false);
   const [pendingConfirm, setPendingConfirm] = useState<{
@@ -78,10 +79,24 @@ export function App({
   // Track terminal resize
   useEffect(() => {
     if (!stdout) return;
-    const onResize = () => setTermHeight(stdout.rows);
+    const onResize = () => { setTermHeight(stdout.rows); setTermColumns(stdout.columns); };
     stdout.on("resize", onResize);
     return () => { stdout.off("resize", onResize); };
   }, [stdout]);
+
+  // Estimate available rows for MessageLog:
+  // Header (border=2 + content=1 = 3) + Input (border=2 + content=1 + margin=1 = 4) + conditional UI
+  const messageRows = useMemo(() => {
+    let used = 3 + 4; // header + input box
+    if (processing && !pendingConfirm) used += 1; // spinner
+    if (pendingConfirm) used += 5; // confirm dialog
+    return Math.max(4, termHeight - used);
+  }, [termHeight, processing, pendingConfirm]);
+
+  // Effective columns for MessageLog text wrapping (AlertPanel takes 50 cols when visible)
+  const effectiveColumns = useMemo(() => {
+    return whaleAlerts.length > 0 ? Math.max(40, termColumns - 50) : termColumns;
+  }, [termColumns, whaleAlerts.length]);
 
   // Subscribe to whale alerts (batched), rate-limited, and wallet-paused events
   useEffect(() => {
@@ -406,7 +421,7 @@ export function App({
 
       <Box flexDirection="row" flexGrow={1}>
         <Box flexDirection="column" flexGrow={1}>
-          <MessageLog messages={messages} />
+          <MessageLog messages={messages} availableRows={messageRows} termColumns={effectiveColumns} />
 
           {processing && !pendingConfirm && <Spinner />}
 
