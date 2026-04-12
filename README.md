@@ -7,7 +7,7 @@
 >
 > **Use at your own risk.** The authors and contributors accept no liability for any losses or damages arising from the use of this software. You are solely responsible for your own trading decisions and wallet security.
 
-A Gemini-powered CLI agent that **analyses Solana tokens** and **trades on DEXs** via MCP servers. Talk to it in plain English — it discovers tools on a remote [MCP](https://modelcontextprotocol.io) server ([svm402.com/mcp](https://svm402.com/mcp)) for token analysis (paid via [x402](https://x402.org)), connects to local MCP servers for Jupiter DEX trading ([dex-trader-mcp](https://github.com/dchu3/dex-trader-mcp)), token discovery via DexScreener ([dex-screener-mcp](https://github.com/dchu3/dex-screener-mcp)), rug-pull safety checks ([dex-rugcheck-mcp](https://github.com/dchu3/dex-rugcheck-mcp)), and direct Solana blockchain queries ([solana-rpc-mcp](https://github.com/dchu3/solana-rpc-mcp)).
+A Gemini-powered terminal trading agent for Solana with a **rich ink-based UI**, **whale wallet tracking**, and **multi-MCP tool orchestration**. Talk to it in plain English — it discovers tools on a remote [MCP](https://modelcontextprotocol.io) server ([svm402.com/mcp](https://svm402.com/mcp)) for token analysis (paid via [x402](https://x402.org)), connects to local MCP servers for Jupiter DEX trading ([dex-trader-mcp](https://github.com/dchu3/dex-trader-mcp)), token discovery via DexScreener ([dex-screener-mcp](https://github.com/dchu3/dex-screener-mcp)), rug-pull safety checks ([dex-rugcheck-mcp](https://github.com/dchu3/dex-rugcheck-mcp)), and direct Solana blockchain queries ([solana-rpc-mcp](https://github.com/dchu3/solana-rpc-mcp)).
 
 ## ⚠️ Important Disclaimer & Consent
 
@@ -51,18 +51,20 @@ Then start the agent:
 cd ~/soltrader/sol-trader-agent && npm start
 ```
 
-> **Tip:** Use `/configure` inside the running agent to update your settings at any time.
+> **Tip:** Edit your `.env` file to update settings. Use `/help` inside the running agent to see available commands.
 
 ## What This Shows
 
-1. **Token Discovery** — Search for tokens, find trending/boosted tokens, and look up market data via DexScreener.
-2. **Token Safety** — Check rug-pull risk, contract analysis, and liquidity assessment via RugCheck.
-3. **On-Chain Data** — Query token supply, top holders, transaction history, and account info directly from Solana RPC.
-4. **Token Analysis** — Analyse any Solana token via the remote MCP server. Payments are handled automatically via the x402 protocol.
-5. **DEX Trading** — Buy and sell tokens using Jupiter aggregator for best prices across all Solana DEXs.
-6. **Smart Workflow** — The agent gathers free data (DexScreener, RugCheck, on-chain) before suggesting the paid svm402 analysis.
-7. **Multi-MCP Architecture** — The agent connects to multiple MCP servers (remote HTTP + local stdio) and merges their tools into a single unified interface.
-8. **Confirmation Before Acting** — All paid and destructive tool calls require user confirmation.
+1. **Rich Terminal UI** — Built with [ink](https://github.com/vadimdemedes/ink) (React for the terminal). Features a status header, scrollable message log, command history, inline confirmation dialogs, and a live whale alert panel.
+2. **Whale Wallet Tracking** — Monitor any Solana wallet for DEX swaps in real time. Detects buys and sells on Jupiter, Orca, and Raydium with alerts in both the CLI and Telegram.
+3. **Token Discovery** — Search for tokens, find trending/boosted tokens, and look up market data via DexScreener.
+4. **Token Safety** — Check rug-pull risk, contract analysis, and liquidity assessment via RugCheck.
+5. **On-Chain Data** — Query token supply, top holders, transaction history, and account info directly from Solana RPC.
+6. **Token Analysis** — Analyse any Solana token via the remote MCP server. Payments are handled automatically via the x402 protocol.
+7. **DEX Trading** — Buy and sell tokens using Jupiter aggregator for best prices across all Solana DEXs.
+8. **Smart Workflow** — The agent gathers free data (DexScreener, RugCheck, on-chain) before suggesting the paid svm402 analysis.
+9. **Multi-MCP Architecture** — The agent connects to multiple MCP servers (remote HTTP + local stdio) and merges their tools into a single unified interface.
+10. **Confirmation Before Acting** — All paid and destructive tool calls require user confirmation.
 
 ## Prerequisites
 
@@ -230,6 +232,24 @@ You can import this wallet into **Phantom**, **Solflare**, or another Solana wal
 npm start
 ```
 
+The terminal UI shows a status header (wallet, model, MCP server count, whale tracker status), a scrollable message log, and a whale alert panel when alerts are active.
+
+**CLI commands:**
+
+| Command | Description |
+|---------|-------------|
+| `/help` | Show available commands |
+| `/clear` | Clear conversation history |
+| `/cache` | Show token cache entries |
+| `/cache clear [addr]` | Clear cache (optionally for a specific token) |
+| `/watch <address> [label]` | Watch a wallet for whale activity |
+| `/unwatch <address>` | Stop watching a wallet |
+| `/whales` | List watched wallets and recent alerts |
+| `/configure` | View configuration guidance |
+| `/quit` | Exit the agent |
+
+You can also ask the agent in natural language to watch/unwatch wallets or check whale alerts.
+
 ### Telegram
 
 1. Create a bot via [@BotFather](https://t.me/BotFather) on Telegram and copy the token
@@ -241,9 +261,9 @@ npm start
    ```
 4. Run `npm start` — both CLI and Telegram interfaces start simultaneously
 
-The Telegram bot provides the same functionality as the CLI: token analysis, trading, balance checks, etc. Destructive actions (buy/sell, paid analysis) require confirmation via inline keyboard buttons (✅ Approve / ❌ Decline). Confirmations time out after 120 seconds.
+The Telegram bot provides the same functionality as the CLI: token analysis, trading, balance checks, whale tracking, etc. Destructive actions (buy/sell, paid analysis) require confirmation via inline keyboard buttons (✅ Approve / ❌ Decline). Confirmations time out after 120 seconds. Whale alerts are forwarded to Telegram in real time when `TELEGRAM_CHAT_ID` is set.
 
-Telegram commands: `/start` (welcome), `/help` (usage info), `/clear` (reset conversation history).
+Telegram commands: `/start` (welcome), `/help` (usage info), `/clear` (reset conversation history), `/watch` (track a wallet), `/unwatch` (stop tracking), `/whales` (list wallets & alerts).
 
 ### Docker
 
@@ -300,18 +320,19 @@ Example prompts:
 > Is this token safe? <mint-address>
 > What are the top holders of <token-address>?
 > What's the total supply of <token-address>?
-> /configure
+> Watch this wallet for whale activity: <wallet-address>
+> What whale alerts have we seen recently?
 > /quit
 ```
 
-The agent connects to the MCP servers, discovers available tools, and uses Gemini to decide which tools to call based on your input. Token analysis payments are made automatically via x402 — you'll be asked to confirm. Trading actions (buy/sell) also require confirmation. Type `/configure` to update settings, `/quit` or press Ctrl+C to exit.
+The agent connects to the MCP servers, discovers available tools, and uses Gemini to decide which tools to call based on your input. Token analysis payments are made automatically via x402 — you'll be asked to confirm. Trading actions (buy/sell) also require confirmation. Type `/quit` or press Ctrl+C to exit.
 
 ## Architecture
 
 ```
                         ┌─────────────┐        ┌──────────────────┐
   User (CLI) ─────────▶│             │──HTTP──▶│  Remote MCP Server│
-    readline  ◀─────────│ Gemini Agent │◀───────│  (x402-gated)    │
+    ink UI    ◀─────────│ Gemini Agent │◀───────│  (x402-gated)    │
                         │  tool loop   │        └──────────────────┘
   User (Telegram) ────▶│             │               │
     grammy bot  ◀───────│             │         402? ─┤
@@ -338,16 +359,28 @@ The agent connects to the MCP servers, discovers available tools, and uses Gemin
                        │                │
                   Solana RPC            │
               (on-chain queries)        │
+
+  ┌──────────────────────────────────────┐
+  │          Whale Tracker               │
+  │  Polls getSignaturesForAddress via   │
+  │  solana-rpc-mcp, detects DEX swaps,  │
+  │  stores in SQLite, emits alerts to   │
+  │  CLI (ink AlertPanel) + Telegram     │
+  └──────────────────────────────────────┘
 ```
 
-- **`src/index.ts`** — Interactive readline CLI entrypoint; orchestrates both CLI and Telegram interfaces
+- **`src/index.ts`** — Main entrypoint; bootstraps MCP clients, whale tracker, Telegram bot, and renders the ink UI
 - **`src/agent.ts`** — Gemini agentic loop with function calling; merges tools from all MCP clients via `ToolRouter`
 - **`src/mcp-client.ts`** — Remote MCP client over StreamableHTTP with x402 payment support
 - **`src/local-mcp-client.ts`** — Local MCP client that spawns a subprocess and connects via stdio
-- **`src/telegram.ts`** — Telegram bot interface using grammy (long-polling, inline keyboard confirmations)
+- **`src/telegram.ts`** — Telegram bot interface using grammy (long-polling, inline keyboard confirmations, whale alert forwarding)
+- **`src/whale-tracker.ts`** — Background polling service that monitors watched wallets for DEX swaps (Jupiter, Orca, Raydium)
+- **`src/whale-db.ts`** — SQLite persistence for watched wallets, whale alerts, and poll cursors
+- **`src/agent-whale-tools.ts`** — Pseudo-MCP tools for conversational whale management (watch, unwatch, list, alerts)
 - **`src/x402-fetch.ts`** — Fetch wrapper that handles x402 payment challenges transparently
 - **`src/config.ts`** — Environment variable loading and validation
 - **`src/logger.ts`** — Debug logging utility (verbose mode)
+- **`src/ui/`** — Ink (React) terminal UI components: `App`, `Header`, `MessageLog`, `InputPrompt`, `ConfirmDialog`, `Spinner`, `AlertPanel`, `TokenTable`
 
 ## License
 
