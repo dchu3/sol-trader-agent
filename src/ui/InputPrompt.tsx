@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useReducer, useState, useRef } from "react";
 import { Box, Text, useInput } from "ink";
 
 interface InputPromptProps {
@@ -7,13 +7,65 @@ interface InputPromptProps {
   placeholder?: string;
 }
 
+interface EditorState {
+  value: string;
+  cursor: number;
+}
+
+type EditorAction =
+  | { type: "insert"; text: string }
+  | { type: "backspace" }
+  | { type: "delete" }
+  | { type: "left" }
+  | { type: "right" }
+  | { type: "home" }
+  | { type: "end" }
+  | { type: "clear" }
+  | { type: "set"; value: string };
+
+function editorReducer(state: EditorState, action: EditorAction): EditorState {
+  const { value, cursor } = state;
+  switch (action.type) {
+    case "insert": {
+      const text = action.text;
+      return {
+        value: value.slice(0, cursor) + text + value.slice(cursor),
+        cursor: cursor + text.length,
+      };
+    }
+    case "backspace":
+      if (cursor <= 0) return state;
+      return {
+        value: value.slice(0, cursor - 1) + value.slice(cursor),
+        cursor: cursor - 1,
+      };
+    case "delete":
+      if (cursor >= value.length) return state;
+      return {
+        value: value.slice(0, cursor) + value.slice(cursor + 1),
+        cursor,
+      };
+    case "left":
+      return cursor > 0 ? { ...state, cursor: cursor - 1 } : state;
+    case "right":
+      return cursor < value.length ? { ...state, cursor: cursor + 1 } : state;
+    case "home":
+      return { ...state, cursor: 0 };
+    case "end":
+      return { ...state, cursor: value.length };
+    case "clear":
+      return { value: "", cursor: 0 };
+    case "set":
+      return { value: action.value, cursor: action.value.length };
+  }
+}
+
 export function InputPrompt({
   onSubmit,
   disabled = false,
   placeholder = "Type a message or /help...",
 }: InputPromptProps): React.JSX.Element {
-  const [value, setValue] = useState("");
-  const [cursor, setCursor] = useState(0);
+  const [editor, dispatch] = useReducer(editorReducer, { value: "", cursor: 0 });
   const [historyStack, setHistoryStack] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const savedDraft = useRef("");
@@ -23,49 +75,32 @@ export function InputPrompt({
       if (disabled) return;
 
       if (key.return) {
-        const trimmed = value.trim();
+        const trimmed = editor.value.trim();
         if (trimmed) {
           setHistoryStack((prev) => [trimmed, ...prev.slice(0, 49)]);
           setHistoryIndex(-1);
           savedDraft.current = "";
           onSubmit(trimmed);
-          setValue("");
-          setCursor(0);
+          dispatch({ type: "clear" });
         }
         return;
       }
 
       // Ctrl+A = Home, Ctrl+E = End
-      if (key.ctrl && input === "a") {
-        setCursor(0);
-        return;
-      }
-      if (key.ctrl && input === "e") {
-        setCursor(value.length);
-        return;
-      }
-      // Ctrl+U = clear line
-      if (key.ctrl && input === "u") {
-        setValue("");
-        setCursor(0);
+      if (key.ctrl && input === "a") { dispatch({ type: "home" }); return; }
+      if (key.ctrl && input === "e") { dispatch({ type: "end" }); return; }
+      if (key.ctrl && input === "u") { dispatch({ type: "clear" }); return; }
+
+      if (key.leftArrow) { dispatch({ type: "left" }); return; }
+      if (key.rightArrow) { dispatch({ type: "right" }); return; }
+
+      if (key.backspace) {
+        dispatch({ type: "backspace" });
         return;
       }
 
-      if (key.leftArrow) {
-        setCursor((prev) => Math.max(0, prev - 1));
-        return;
-      }
-
-      if (key.rightArrow) {
-        setCursor((prev) => Math.min(value.length, prev + 1));
-        return;
-      }
-
-      if (key.backspace || key.delete) {
-        if (cursor > 0) {
-          setValue((prev) => prev.slice(0, cursor - 1) + prev.slice(cursor));
-          setCursor((prev) => prev - 1);
-        }
+      if (key.delete) {
+        dispatch({ type: "delete" });
         return;
       }
 
@@ -73,12 +108,10 @@ export function InputPrompt({
         if (historyStack.length === 0) return;
         setHistoryIndex((prev) => {
           if (prev === -1) {
-            savedDraft.current = value;
+            savedDraft.current = editor.value;
           }
           const next = Math.min(prev + 1, historyStack.length - 1);
-          const entry = historyStack[next];
-          setValue(entry);
-          setCursor(entry.length);
+          dispatch({ type: "set", value: historyStack[next] });
           return next;
         });
         return;
@@ -86,16 +119,14 @@ export function InputPrompt({
 
       if (key.downArrow) {
         setHistoryIndex((prev) => {
-          const next = prev - 1;
-          if (next < 0) {
-            const draft = savedDraft.current;
-            setValue(draft);
-            setCursor(draft.length);
+          if (prev <= 0) {
+            if (prev === 0) {
+              dispatch({ type: "set", value: savedDraft.current });
+            }
             return -1;
           }
-          const entry = historyStack[next];
-          setValue(entry);
-          setCursor(entry.length);
+          const next = prev - 1;
+          dispatch({ type: "set", value: historyStack[next] });
           return next;
         });
         return;
@@ -105,8 +136,7 @@ export function InputPrompt({
       if (key.ctrl || key.meta || key.escape || key.tab) return;
 
       if (input) {
-        setValue((prev) => prev.slice(0, cursor) + input + prev.slice(cursor));
-        setCursor((prev) => prev + input.length);
+        dispatch({ type: "insert", text: input });
         setHistoryIndex(-1);
       }
     },
@@ -116,7 +146,7 @@ export function InputPrompt({
     if (disabled) {
       return <Text dimColor>Processing...</Text>;
     }
-    if (!value) {
+    if (!editor.value) {
       return (
         <Text>
           <Text inverse> </Text>
@@ -124,9 +154,9 @@ export function InputPrompt({
         </Text>
       );
     }
-    const before = value.slice(0, cursor);
-    const cursorChar = value[cursor] ?? " ";
-    const after = value.slice(cursor + 1);
+    const before = editor.value.slice(0, editor.cursor);
+    const cursorChar = editor.value[editor.cursor] ?? " ";
+    const after = editor.value.slice(editor.cursor + 1);
     return (
       <Text>
         {before}
