@@ -417,7 +417,7 @@ export function App({
             />
           )}
 
-          <Box borderStyle="single" borderColor="gray" borderTop borderBottom={false} borderLeft={false} borderRight={false} flexShrink={0}>
+          <Box borderStyle="single" borderColor="gray" borderTop borderBottom={false} borderLeft={false} borderRight={false} flexShrink={0} marginBottom={1}>
             <InputPrompt
               onSubmit={handleSubmit}
               disabled={processing}
