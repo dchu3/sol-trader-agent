@@ -6,7 +6,7 @@ import { runAgent } from "./agent.js";
 import { debug } from "./logger.js";
 import type { TokenCache } from "./token-cache.js";
 import type { WhaleDb } from "./whale-db.js";
-import type { WhaleTracker, WhaleSwapEvent } from "./whale-tracker.js";
+import type { WhaleTracker, WhaleSwapEvent, WhaleWalletPausedEvent } from "./whale-tracker.js";
 
 /** Telegram message length limit. */
 const MAX_MESSAGE_LENGTH = 4096;
@@ -133,6 +133,51 @@ export async function startTelegramBot(
     await ctx.reply(removed ? `Stopped watching ${address}` : `${address} was not watched`);
   });
 
+  bot.command("purge", async (ctx) => {
+    if (!whaleDb) {
+      await ctx.reply("🐋 Whale tracking is not available.");
+      return;
+    }
+    const addr = ctx.match?.trim();
+    if (!addr) {
+      await ctx.reply("Usage: /purge <wallet_address>");
+      return;
+    }
+    const removed = whaleDb.removeWallet(addr);
+    await ctx.reply(removed
+      ? `🗑️ Purged wallet ${addr} — removed wallet, alerts, and tracking cursor.`
+      : `Wallet ${addr} was not found in the watch list.`
+    );
+  });
+
+  bot.command("pause", async (ctx) => {
+    if (!whaleDb) {
+      await ctx.reply("🐋 Whale tracking is not available.");
+      return;
+    }
+    const addr = ctx.match?.trim();
+    if (!addr) {
+      await ctx.reply("Usage: /pause <wallet_address>");
+      return;
+    }
+    const paused = whaleDb.pauseWallet(addr);
+    await ctx.reply(paused ? `⏸️ Paused tracking for ${addr}` : `${addr} is not watched or already paused.`);
+  });
+
+  bot.command("resume", async (ctx) => {
+    if (!whaleDb) {
+      await ctx.reply("🐋 Whale tracking is not available.");
+      return;
+    }
+    const addr = ctx.match?.trim();
+    if (!addr) {
+      await ctx.reply("Usage: /resume <wallet_address>");
+      return;
+    }
+    const resumed = whaleDb.resumeWallet(addr);
+    await ctx.reply(resumed ? `▶️ Resumed tracking for ${addr}` : `${addr} is not watched or not paused.`);
+  });
+
   bot.command("whales", async (ctx) => {
     if (!whaleDb) {
       await ctx.reply("🐋 Whale tracking is not available.");
@@ -146,7 +191,8 @@ export async function startTelegramBot(
     } else {
       for (const w of wallets) {
         const label = w.label ? ` (${w.label})` : "";
-        msg += `• <code>${w.address}</code>${label}\n`;
+        const pausedTag = w.paused ? " [PAUSED]" : "";
+        msg += `• <code>${w.address}</code>${label}${pausedTag}\n`;
       }
     }
     msg += `\n<b>Recent Alerts (${alerts.length})</b>\n`;
@@ -483,29 +529,77 @@ export async function startTelegramBot(
     { command: "watch", description: "Watch a whale wallet" },
     { command: "unwatch", description: "Stop watching a wallet" },
     { command: "whales", description: "List watched wallets & alerts" },
+    { command: "purge", description: "Remove wallet and all its data" },
+    { command: "pause", description: "Pause tracking a wallet" },
+    { command: "resume", description: "Resume tracking a wallet" },
   ]);
 
-  // ── Whale alert forwarding ────────────────────────────────────────────
-  if (whaleTracker) {
-    const forwardAlert = (event: WhaleSwapEvent) => {
-      const a = event.alert;
-      const label = a.walletLabel || a.walletAddress.slice(0, 8) + "...";
-      const token = a.tokenSymbol || a.tokenAddress.slice(0, 8) + "...";
-      const action = a.action === "buy" ? "🟢 BUY" : a.action === "sell" ? "🔴 SELL" : "⚪ ???";
-      const msg = `🐋 <b>Whale Alert</b>\n${action} <b>${label}</b> → <code>${token}</code>\nAmount: ${a.solAmount} SOL\nTx: <code>${a.signature.slice(0, 16)}...</code>`;
+  // ── Whale alert forwarding (throttled per wallet) ──────────────────
+  const alertBuffer = new Map<string, WhaleSwapEvent[]>();
+  const flushTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-      // Forward to all known chat IDs (the auth middleware will filter)
+  if (whaleTracker) {
+    const THROTTLE_MS = 3_000;
+
+    const flushAlerts = (walletAddress: string) => {
+      const events = alertBuffer.get(walletAddress);
+      alertBuffer.delete(walletAddress);
+      flushTimers.delete(walletAddress);
+      if (!events || events.length === 0) return;
+
       const targetChatId = config.telegramChatId;
-      if (targetChatId) {
-        bot.api.sendMessage(targetChatId, msg, { parse_mode: "HTML" }).catch((err) => {
-          debug(`Failed to forward whale alert to Telegram: ${err instanceof Error ? err.message : String(err)}`);
-        });
-      } else {
+      if (!targetChatId) {
         debug("Whale alert not forwarded to Telegram: TELEGRAM_CHAT_ID is not set");
+        return;
+      }
+
+      let msg: string;
+      if (events.length === 1) {
+        const a = events[0].alert;
+        const label = a.walletLabel || a.walletAddress.slice(0, 8) + "...";
+        const token = a.tokenSymbol || a.tokenAddress.slice(0, 8) + "...";
+        const action = a.action === "buy" ? "🟢 BUY" : a.action === "sell" ? "🔴 SELL" : "⚪ ???";
+        msg = `🐋 <b>Whale Alert</b>\n${action} <b>${label}</b> → <code>${token}</code>\nAmount: ${a.solAmount} SOL\nTx: <code>${a.signature.slice(0, 16)}...</code>`;
+      } else {
+        const first = events[0].alert;
+        const label = first.walletLabel || first.walletAddress.slice(0, 8) + "...";
+        let buyCount = 0;
+        let sellCount = 0;
+        let totalSol = 0;
+        for (const e of events) {
+          if (e.alert.action === "buy") buyCount++;
+          else if (e.alert.action === "sell") sellCount++;
+          totalSol += parseFloat(e.alert.solAmount) || 0;
+        }
+        msg = `🐋 <b>Whale Alert Batch</b>\n<b>${label}</b>: ${events.length} swaps detected\n${buyCount} buys, ${sellCount} sells\nTotal: ~${totalSol.toFixed(2)} SOL volume`;
+      }
+
+      bot.api.sendMessage(targetChatId, msg, { parse_mode: "HTML" }).catch((err) => {
+        debug(`Failed to forward whale alert to Telegram: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    };
+
+    const forwardAlert = (event: WhaleSwapEvent) => {
+      const addr = event.alert.walletAddress;
+      const buffer = alertBuffer.get(addr) ?? [];
+      buffer.push(event);
+      alertBuffer.set(addr, buffer);
+
+      if (!flushTimers.has(addr)) {
+        flushTimers.set(addr, setTimeout(() => flushAlerts(addr), THROTTLE_MS));
       }
     };
 
     whaleTracker.on("alert", forwardAlert);
+
+    whaleTracker.on("wallet-paused", (event: WhaleWalletPausedEvent) => {
+      const targetChatId = config.telegramChatId;
+      if (!targetChatId) return;
+      const msg = `⚠️ <b>Wallet Auto-Paused</b>\n<b>${event.label}</b> (<code>${event.address}</code>) was generating too many alerts and has been automatically paused.\nUse /resume ${event.address} to re-enable tracking.`;
+      bot.api.sendMessage(targetChatId, msg, { parse_mode: "HTML" }).catch((err) => {
+        debug(`Failed to send wallet-paused notification: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    });
   }
 
   // ── Start bot ────────────────────────────────────────────────────────
@@ -529,6 +623,12 @@ export async function startTelegramBot(
       pending.resolve(false);
     }
     pendingConfirmations.clear();
+    // Clean up throttle flush timers.
+    for (const [, timer] of flushTimers) {
+      clearTimeout(timer);
+    }
+    flushTimers.clear();
+    alertBuffer.clear();
     bot.stop();
   };
 }
