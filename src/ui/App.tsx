@@ -417,6 +417,7 @@ export function App({
         serverCount={serverCount}
         whaleTrackerActive={whaleTracker?.isRunning() ?? false}
         watchedWalletCount={whaleDb.listWallets().length}
+        termColumns={termColumns}
       />
 
       <Box flexDirection="row" flexGrow={1}>
