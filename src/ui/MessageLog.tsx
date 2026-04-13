@@ -72,7 +72,7 @@ export function MessageLog({
   // Track whether user is at the bottom
   const handleScroll = (offset: number) => {
     const bottom = scrollRef.current?.getBottomOffset() ?? 0;
-    isAtBottomRef.current = offset >= bottom - 1;
+    isAtBottomRef.current = offset >= bottom;
   };
 
   // Auto-scroll to bottom on new messages (if user was at bottom)
@@ -80,7 +80,7 @@ export function MessageLog({
     if (messages.length > prevLengthRef.current && isAtBottomRef.current) {
       // Small delay to let ScrollView measure the new content
       const timer = setTimeout(() => {
-        scrollRef.current?.scrollToBottom();
+        if (isAtBottomRef.current) scrollRef.current?.scrollToBottom();
       }, 50);
       prevLengthRef.current = messages.length;
       return () => clearTimeout(timer);
@@ -91,7 +91,12 @@ export function MessageLog({
   // Handle terminal resize
   useEffect(() => {
     if (!stdout) return;
-    const onResize = () => scrollRef.current?.remeasure();
+    const onResize = () => {
+      scrollRef.current?.remeasure();
+      if (isAtBottomRef.current) {
+        setTimeout(() => scrollRef.current?.scrollToBottom(), 0);
+      }
+    };
     stdout.on("resize", onResize);
     return () => { stdout.off("resize", onResize); };
   }, [stdout]);
@@ -102,7 +107,9 @@ export function MessageLog({
       scrollRef.current?.scrollBy(-1);
     }
     if (key.shift && key.downArrow) {
-      scrollRef.current?.scrollBy(1);
+      const maxOffset = scrollRef.current?.getBottomOffset() ?? 0;
+      const current = scrollRef.current?.getScrollOffset() ?? 0;
+      scrollRef.current?.scrollTo(Math.min(current + 1, maxOffset));
     }
   });
 
