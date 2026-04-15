@@ -288,6 +288,18 @@ You can also force headless mode with the `--headless` flag:
 npm start -- --headless              # Headless even with a TTY
 ```
 
+### Plain Mode (tmux-friendly)
+
+If you use tmux (or another terminal multiplexer), the default Ink TUI uses the alternate screen buffer which prevents native scrollback. Use `--plain` mode for a simple readline-based interface that writes directly to stdout:
+
+```bash
+npm start -- --plain
+```
+
+This gives you full tmux scroll support (`Ctrl+B [`) while keeping all the same commands and agent features.
+
+> **Tip:** In the default Ink UI, you can also scroll with: **Shift+↑/↓** (5 lines), **Page Up/Down** (page), **Ctrl+↑/↓** (top/bottom).
+
 Or without Compose:
 
 ```bash

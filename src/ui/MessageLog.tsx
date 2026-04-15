@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import { ScrollView } from "ink-scroll-view";
 import type { ScrollViewRef } from "ink-scroll-view";
@@ -13,6 +13,9 @@ interface MessageLogProps {
   messages: Message[];
   maxVisible?: number;
 }
+
+const SCROLL_STEP = 5;
+const PAGE_OVERLAP = 2;
 
 function formatTime(ts: number): string {
   const d = new Date(ts);
@@ -59,26 +62,34 @@ function MessageBubble({ msg }: { msg: Message }): React.JSX.Element {
 
 export function MessageLog({
   messages,
-  maxVisible = 50,
+  maxVisible = 200,
 }: MessageLogProps): React.JSX.Element {
   const scrollRef = useRef<ScrollViewRef>(null);
   const { stdout } = useStdout();
   const prevLengthRef = useRef(messages.length);
   const isAtBottomRef = useRef(true);
+  const [scrollPercent, setScrollPercent] = useState(100);
+  const [showIndicator, setShowIndicator] = useState(false);
 
   const recent = messages.slice(-maxVisible);
   const hiddenCount = messages.length - recent.length;
 
-  // Track whether user is at the bottom
-  const handleScroll = (offset: number) => {
+  const updateScrollState = useCallback(() => {
     const bottom = scrollRef.current?.getBottomOffset() ?? 0;
+    const offset = scrollRef.current?.getScrollOffset() ?? 0;
     isAtBottomRef.current = offset >= bottom;
-  };
+    setShowIndicator(bottom > 0 && offset < bottom);
+    setScrollPercent(bottom > 0 ? Math.round((offset / bottom) * 100) : 100);
+  }, []);
+
+  // Track whether user is at the bottom
+  const handleScroll = useCallback((_offset: number) => {
+    updateScrollState();
+  }, [updateScrollState]);
 
   // Auto-scroll to bottom on new messages (if user was at bottom)
   useEffect(() => {
     if (messages.length > prevLengthRef.current && isAtBottomRef.current) {
-      // Small delay to let ScrollView measure the new content
       const timer = setTimeout(() => {
         if (isAtBottomRef.current) scrollRef.current?.scrollToBottom();
       }, 50);
@@ -101,15 +112,42 @@ export function MessageLog({
     return () => { stdout.off("resize", onResize); };
   }, [stdout]);
 
-  // Shift+Up/Down for scrolling
-  useInput((_input, key) => {
+  // Scroll keybindings
+  useInput((input, key) => {
+    // Shift+Up/Down — scroll by SCROLL_STEP lines
     if (key.shift && key.upArrow) {
-      scrollRef.current?.scrollBy(-1);
+      scrollRef.current?.scrollBy(-SCROLL_STEP);
+      return;
     }
     if (key.shift && key.downArrow) {
       const maxOffset = scrollRef.current?.getBottomOffset() ?? 0;
       const current = scrollRef.current?.getScrollOffset() ?? 0;
-      scrollRef.current?.scrollTo(Math.min(current + 1, maxOffset));
+      scrollRef.current?.scrollTo(Math.min(current + SCROLL_STEP, maxOffset));
+      return;
+    }
+
+    // Page Up / Page Down — scroll by viewport height
+    if (key.pageUp) {
+      const vpHeight = scrollRef.current?.getViewportHeight() ?? 20;
+      scrollRef.current?.scrollBy(-(vpHeight - PAGE_OVERLAP));
+      return;
+    }
+    if (key.pageDown) {
+      const vpHeight = scrollRef.current?.getViewportHeight() ?? 20;
+      const maxOffset = scrollRef.current?.getBottomOffset() ?? 0;
+      const current = scrollRef.current?.getScrollOffset() ?? 0;
+      scrollRef.current?.scrollTo(Math.min(current + (vpHeight - PAGE_OVERLAP), maxOffset));
+      return;
+    }
+
+    // Ctrl+Home / Ctrl+End — jump to top/bottom
+    if (key.ctrl && key.upArrow) {
+      scrollRef.current?.scrollToTop();
+      return;
+    }
+    if (key.ctrl && key.downArrow) {
+      scrollRef.current?.scrollToBottom();
+      return;
     }
   });
 
@@ -135,6 +173,13 @@ export function MessageLog({
           </>
         )}
       </ScrollView>
+      {showIndicator && (
+        <Box paddingX={1} flexShrink={0}>
+          <Text dimColor>
+            ↑ Shift+↑↓ scroll • PgUp/PgDn page • Ctrl+↑↓ top/bottom — {scrollPercent}%
+          </Text>
+        </Box>
+      )}
     </Box>
   );
 }
