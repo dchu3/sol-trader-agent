@@ -240,7 +240,6 @@ async function main(): Promise<void> {
       verbose,
       onQuit: shutdown,
     });
-    await shutdown();
     return;
   }
 

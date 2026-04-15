@@ -132,6 +132,7 @@ export function InputPrompt({
       }
 
       if (key.upArrow) {
+        if (key.ctrl || key.shift) return;
         if (showSuggestions) {
           setSelectedSuggestion((prev) => Math.max(0, prev - 1));
           return;
@@ -149,6 +150,7 @@ export function InputPrompt({
       }
 
       if (key.downArrow) {
+        if (key.ctrl || key.shift) return;
         if (showSuggestions) {
           setSelectedSuggestion((prev) => Math.min(Math.min(suggestions.length, MAX_VISIBLE) - 1, prev + 1));
           return;

@@ -226,15 +226,23 @@ export async function runPlainUi(opts: PlainUiOptions): Promise<void> {
     prompt: `${BLUE}${BOLD}> ${RESET}`,
   });
 
-  const promptAndRead = (): Promise<string> =>
+  const promptAndRead = (): Promise<string | null> =>
     new Promise((resolve) => {
       rl.prompt();
       rl.once("line", (line: string) => resolve(line));
+      rl.once("close", () => resolve(null));
     });
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
     const line = await promptAndRead();
+    if (line === null) {
+      // EOF (Ctrl+D) — graceful shutdown
+      printSystem("EOF received, shutting down...");
+      rl.close();
+      await onQuit();
+      return;
+    }
     const trimmed = line.trim();
     if (!trimmed) continue;
 
