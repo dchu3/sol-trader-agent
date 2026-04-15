@@ -200,6 +200,13 @@ export function App({
             "  /resume <addr>  Resume tracking for a wallet",
             "  /configure  View/update settings",
             "  /quit       Exit",
+            "",
+            "Scroll keybindings:",
+            "  Shift+↑/↓       Scroll up/down (5 lines)",
+            "  Page Up/Down    Scroll by page",
+            "  Ctrl+↑/↓        Jump to top/bottom",
+            "",
+            "Tip: Use --plain flag for tmux-friendly output with native scrollback.",
           ].join("\n"));
           return true;
 

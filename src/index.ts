@@ -15,10 +15,12 @@ import { WhaleDb } from "./whale-db.js";
 import { WhaleTracker } from "./whale-tracker.js";
 import { createWhaleTools } from "./agent-whale-tools.js";
 import { App } from "./ui/App.js";
+import { runPlainUi } from "./plain-ui.js";
 
 async function main(): Promise<void> {
   const verbose =
     process.argv.includes("--verbose") || process.argv.includes("-v");
+  const plain = process.argv.includes("--plain");
   const headless =
     process.argv.includes("--headless") || !process.stdin.isTTY || !process.stdout.isTTY;
   const config: Config = loadConfig();
@@ -211,7 +213,7 @@ async function main(): Promise<void> {
   process.once("SIGINT", handleSignal);
   process.once("SIGTERM", handleSignal);
 
-  // ── Render ink UI or run headless ────────────────────────────────────
+  // ── Render ink UI, plain UI, or run headless ────────────────────────
   if (headless) {
     console.log("Running in headless mode (no TTY detected or --headless flag set).");
     if (!stopTelegramBot && !whaleTracker) {
@@ -225,6 +227,20 @@ async function main(): Promise<void> {
     console.log("Press Ctrl+C to stop.");
     // Block until a signal terminates the process
     await new Promise<void>(() => {});
+  }
+
+  if (plain) {
+    await runPlainUi({
+      config,
+      router: whaleToolRouter,
+      cache,
+      whaleDb,
+      whaleTracker,
+      serverCount,
+      verbose,
+      onQuit: shutdown,
+    });
+    return;
   }
 
   const { waitUntilExit } = render(
