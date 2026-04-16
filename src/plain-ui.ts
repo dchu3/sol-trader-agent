@@ -229,8 +229,10 @@ export async function runPlainUi(opts: PlainUiOptions): Promise<void> {
   const promptAndRead = (): Promise<string | null> =>
     new Promise((resolve) => {
       rl.prompt();
-      rl.once("line", (line: string) => resolve(line));
-      rl.once("close", () => resolve(null));
+      const onLine = (line: string) => { rl.removeListener("close", onClose); resolve(line); };
+      const onClose = () => { rl.removeListener("line", onLine); resolve(null); };
+      rl.once("line", onLine);
+      rl.once("close", onClose);
     });
 
   // eslint-disable-next-line no-constant-condition
