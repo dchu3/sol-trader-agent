@@ -1,4 +1,4 @@
-import { Bot, InlineKeyboard, type Context } from "grammy";
+import { Bot, InlineKeyboard, type Api, type Context } from "grammy";
 import type { Content } from "@google/genai";
 import type { Config } from "./config.js";
 import type { ToolRouter, ConfirmFn, Channel } from "./agent.js";
@@ -7,6 +7,8 @@ import { debug } from "./logger.js";
 import type { TokenCache } from "./token-cache.js";
 import type { WhaleDb } from "./whale-db.js";
 import type { WhaleTracker, WhaleSwapEvent, WhaleWalletPausedEvent } from "./whale-tracker.js";
+import type { ExchangeDb } from "./exchange-db.js";
+import type { ExchangeTracker, ExchangeTransferEvent } from "./exchange-tracker.js";
 
 /** Telegram message length limit. */
 const MAX_MESSAGE_LENGTH = 4096;
@@ -32,6 +34,9 @@ export async function startTelegramBot(
   cache?: TokenCache,
   whaleDb?: WhaleDb,
   whaleTracker?: WhaleTracker | null,
+  exchangeDb?: ExchangeDb,
+  exchangeTracker?: ExchangeTracker | null,
+  analyzeExchangeTransfer?: (event: ExchangeTransferEvent) => Promise<string>,
 ): Promise<() => void> {
   if (!config.telegramBotToken) {
     throw new Error("TELEGRAM_BOT_TOKEN is required to start the Telegram bot");
@@ -216,6 +221,131 @@ export async function startTelegramBot(
     }
   });
 
+  // ── Exchange tracker commands ─────────────────────────────────────
+  bot.command("exchange_wallets", async (ctx) => {
+    if (!exchangeDb) {
+      await ctx.reply("🏦 Exchange hot wallet tracking is not available.");
+      return;
+    }
+    const wallets = exchangeDb.listWallets();
+    const recentTransfers = exchangeDb.recentTransfers(5);
+
+    // Group wallets by exchange
+    const byExchange = new Map<string, typeof wallets>();
+    for (const w of wallets) {
+      const group = byExchange.get(w.exchangeName) ?? [];
+      group.push(w);
+      byExchange.set(w.exchangeName, group);
+    }
+
+    let msg = `🏦 <b>Exchange Wallets (${wallets.length})</b>\n`;
+    if (wallets.length === 0) {
+      msg += "No exchange wallets being tracked.\n";
+    } else {
+      for (const [exchange, group] of [...byExchange.entries()].sort()) {
+        msg += `\n<b>${exchange}</b>\n`;
+        for (const w of group) {
+          const icon = w.walletType === "hot" ? "🔥" : "🧊";
+          const pausedTag = w.paused ? " [PAUSED]" : "";
+          msg += `${icon} ${w.walletType.toUpperCase()}${pausedTag}: <code>${w.address.slice(0, 12)}...</code>\n`;
+        }
+      }
+    }
+
+    msg += `\n<b>Recent Transfers (${recentTransfers.length})</b>\n`;
+    if (recentTransfers.length === 0) {
+      msg += "No large transfers detected yet (threshold: ≥1000 SOL).";
+    } else {
+      for (const t of recentTransfers) {
+        const icon = t.transferType === "cold_to_hot" ? "🔴" : t.transferType === "hot_to_cold" ? "🟢" : "🔄";
+        const time = new Date(t.timestamp).toLocaleDateString();
+        msg += `${icon} ${t.exchangeName}: ${t.solAmount.toFixed(0)} SOL (${t.transferType.replace(/_/g, "→")}) ${time}\n`;
+      }
+    }
+
+    try {
+      await ctx.reply(msg, { parse_mode: "HTML" });
+    } catch {
+      await ctx.reply(msg.replace(/<[^>]*>/g, ""));
+    }
+  });
+
+  bot.command("add_exchange", async (ctx) => {
+    if (!exchangeDb) {
+      await ctx.reply("🏦 Exchange hot wallet tracking is not available.");
+      return;
+    }
+    // Usage: /add_exchange <address> <hot|cold> <exchange_name> [label]
+    const text = (ctx.message?.text ?? "").replace(/^\/add_exchange\s*/, "").trim();
+    const parts = text.split(/\s+/);
+    const address = parts[0];
+    const walletType = parts[1] as "hot" | "cold" | undefined;
+    const exchangeName = parts[2];
+    const label = parts.slice(3).join(" ");
+
+    if (!address || address.length < 32) {
+      await ctx.reply("Usage: /add_exchange <address> <hot|cold> <exchange_name> [label]");
+      return;
+    }
+    if (walletType !== "hot" && walletType !== "cold") {
+      await ctx.reply("Usage: /add_exchange <address> <hot|cold> <exchange_name> [label]\n\nwallet_type must be 'hot' or 'cold'.");
+      return;
+    }
+    if (!exchangeName) {
+      await ctx.reply("Usage: /add_exchange <address> <hot|cold> <exchange_name> [label]");
+      return;
+    }
+
+    const added = exchangeDb.addWallet(address, exchangeName, walletType, label);
+    if (added) {
+      await ctx.reply(
+        `🏦 Now tracking ${walletType} wallet for <b>${exchangeName}</b>${label ? ` (${label})` : ""}\n<code>${address}</code>`,
+        { parse_mode: "HTML" },
+      );
+    } else {
+      await ctx.reply(`Wallet ${address} is already being tracked.`);
+    }
+  });
+
+  bot.command("remove_exchange", async (ctx) => {
+    if (!exchangeDb) {
+      await ctx.reply("🏦 Exchange hot wallet tracking is not available.");
+      return;
+    }
+    const address = (ctx.message?.text ?? "").replace(/^\/remove_exchange\s*/, "").trim();
+    if (!address) {
+      await ctx.reply("Usage: /remove_exchange <address>");
+      return;
+    }
+    const removed = exchangeDb.removeWallet(address);
+    await ctx.reply(
+      removed
+        ? `✅ Removed exchange wallet ${address} from tracking.`
+        : `Wallet ${address} was not found in the exchange tracker.`,
+    );
+  });
+
+  bot.command("resume_exchange", async (ctx) => {
+    if (!exchangeDb) {
+      await ctx.reply("🏦 Exchange hot wallet tracking is not available.");
+      return;
+    }
+    const addr = ctx.match?.trim();
+    if (!addr) {
+      await ctx.reply("Usage: /resume_exchange <address>");
+      return;
+    }
+    const resumed = exchangeDb.resumeWallet(addr);
+    if (resumed && exchangeTracker) {
+      exchangeTracker.resetAlertCount(addr);
+    }
+    await ctx.reply(
+      resumed
+        ? `▶️ Resumed exchange wallet tracking for ${addr}. Rate-limit counter reset.`
+        : `Wallet ${addr} was not found or is not paused.`,
+    );
+  });
+
   // ── Callback queries (inline keyboard confirmations) ─────────────────
   bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery.data;
@@ -306,7 +436,7 @@ export async function startTelegramBot(
         cache,
       );
 
-      await sendLongMessage(ctx, chatId, answer);
+      await sendLongMessage(ctx.api, chatId, answer);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       debug(`Telegram agent error: ${errorMsg}`);
@@ -453,16 +583,16 @@ export async function startTelegramBot(
 
   /** Try to send with HTML; fall back to plain text only for parse errors. */
   async function sendHtmlWithFallback(
-    ctx: Context,
+    api: Api,
     chatId: number,
     html: string,
   ): Promise<void> {
     try {
-      await ctx.api.sendMessage(chatId, html, { parse_mode: "HTML" });
+      await api.sendMessage(chatId, html, { parse_mode: "HTML" });
     } catch (err) {
       if (isHtmlParseError(err)) {
         debug(`Telegram HTML parse error, falling back to plain text: ${err instanceof Error ? err.message : String(err)}`);
-        await ctx.api.sendMessage(chatId, toPlainText(html));
+        await api.sendMessage(chatId, toPlainText(html));
       } else {
         throw err;
       }
@@ -470,14 +600,14 @@ export async function startTelegramBot(
   }
 
   async function sendLongMessage(
-    ctx: Context,
+    api: Api,
     chatId: number,
     rawText: string,
   ): Promise<void> {
     const text = sanitizeHtml(rawText);
 
     if (text.length <= MAX_MESSAGE_LENGTH) {
-      await sendHtmlWithFallback(ctx, chatId, text);
+      await sendHtmlWithFallback(api, chatId, text);
       return;
     }
 
@@ -518,7 +648,7 @@ export async function startTelegramBot(
       const finalOpen = openTagStack(prefix + chunk);
       const finalSuffix = [...finalOpen].reverse().map((t) => `</${t.name}>`).join("");
 
-      await sendHtmlWithFallback(ctx, chatId, prefix + chunk + finalSuffix);
+      await sendHtmlWithFallback(api, chatId, prefix + chunk + finalSuffix);
 
       // The tags we just force-closed need reopening in the next chunk.
       carryOver = finalOpen;
@@ -535,6 +665,10 @@ export async function startTelegramBot(
     { command: "purge", description: "Remove wallet and all its data" },
     { command: "pause", description: "Pause tracking a wallet" },
     { command: "resume", description: "Resume tracking a wallet" },
+    { command: "exchange_wallets", description: "List exchange wallets & recent transfers" },
+    { command: "add_exchange", description: "Add an exchange wallet to track" },
+    { command: "remove_exchange", description: "Remove an exchange wallet" },
+    { command: "resume_exchange", description: "Resume a paused exchange wallet" },
   ]);
 
   // ── Whale alert forwarding (throttled per wallet) ──────────────────
@@ -602,6 +736,55 @@ export async function startTelegramBot(
       bot.api.sendMessage(targetChatId, msg, { parse_mode: "HTML" }).catch((err) => {
         debug(`Failed to send wallet-paused notification: ${err instanceof Error ? err.message : String(err)}`);
       });
+    });
+  }
+
+  // ── Exchange transfer alert forwarding ────────────────────────────
+  if (exchangeTracker && analyzeExchangeTransfer) {
+    exchangeTracker.on("transfer", (event: ExchangeTransferEvent) => {
+      const targetChatId = config.telegramChatId;
+      if (!targetChatId) {
+        debug("Exchange transfer alert not forwarded to Telegram: TELEGRAM_CHAT_ID is not set");
+        return;
+      }
+
+      const t = event.transfer;
+      const safeExchangeName = escapeHtmlText(t.exchangeName);
+      const typeIcon =
+        t.transferType === "cold_to_hot"
+          ? "🔴"
+          : t.transferType === "hot_to_cold"
+          ? "🟢"
+          : "🔄";
+      const typeLabel = t.transferType.replace(/_/g, " ").toUpperCase();
+
+      // Send immediate raw alert
+      const alertMsg =
+        `🏦 <b>Exchange Transfer Alert</b>\n` +
+        `${typeIcon} <b>${safeExchangeName}</b> — ${typeLabel}\n` +
+        `Amount: <b>${t.solAmount.toFixed(0)} SOL</b>\n` +
+        `From (${t.fromType}): <code>${t.fromAddress.slice(0, 12)}...</code>\n` +
+        `To (${t.toType}): <code>${t.toAddress.slice(0, 12)}...</code>\n` +
+        `Tx: <code>${t.signature.slice(0, 16)}...</code>\n\n` +
+        `⏳ <i>Running Gemini market analysis...</i>`;
+
+      bot.api
+        .sendMessage(targetChatId, alertMsg, { parse_mode: "HTML" })
+        .then(() => {
+          // Then run the Gemini analysis asynchronously and send as follow-up
+          return analyzeExchangeTransfer(event);
+        })
+        .then((analysis) => {
+          const analysisMsg =
+            `🤖 <b>Gemini Analysis — ${safeExchangeName} ${typeLabel}</b>\n\n` +
+            sanitizeHtml(analysis);
+          return sendLongMessage(bot.api, targetChatId, analysisMsg);
+        })
+        .catch((err) => {
+          debug(
+            `Failed to forward exchange transfer to Telegram: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
     });
   }
 

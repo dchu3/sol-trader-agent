@@ -7,6 +7,8 @@ import type { TokenCache } from "./token-cache.js";
 import { extractTokenAddress } from "./token-cache.js";
 import type { WhaleDb, WhaleAlert } from "./whale-db.js";
 import type { WhaleTracker, WhaleSwapEvent } from "./whale-tracker.js";
+import type { ExchangeDb } from "./exchange-db.js";
+import type { ExchangeTracker, ExchangeTransferEvent } from "./exchange-tracker.js";
 
 // ── ANSI helpers ─────────────────────────────────────────────────────
 const RESET = "\x1b[0m";
@@ -48,6 +50,13 @@ function printWhaleAlert(alert: WhaleAlert): void {
   console.log(`${MAGENTA}🐋${RESET} ${action} ${bold(label)} → ${cyan(token)} (${alert.solAmount} SOL)`);
 }
 
+function printExchangeAlert(event: ExchangeTransferEvent): void {
+  const t = event.transfer;
+  const typeIcon = t.transferType === "cold_to_hot" ? "🔴" : t.transferType === "hot_to_cold" ? "🟢" : "🔄";
+  const typeLabel = t.transferType.replace(/_/g, "→").toUpperCase();
+  console.log(`${MAGENTA}🏦${RESET} ${typeIcon} ${bold(t.exchangeName)} ${cyan(typeLabel)} — ${yellow(t.solAmount.toFixed(0))} SOL`);
+}
+
 // ── Slash command handling ───────────────────────────────────────────
 function handleCommand(
   cmd: string,
@@ -55,6 +64,7 @@ function handleCommand(
   cache: TokenCache,
   whaleDb: WhaleDb,
   whaleTracker: WhaleTracker | null,
+  exchangeDb: ExchangeDb,
 ): boolean {
   switch (cmd) {
     case "/help":
@@ -70,6 +80,7 @@ function handleCommand(
         "  /purge <addr>  Remove wallet, alerts, and tracking cursor",
         "  /pause <addr>  Pause tracking for a wallet",
         "  /resume <addr>  Resume tracking for a wallet",
+        "  /exchanges  List exchange wallets & recent transfers",
         "  /quit       Exit",
       ].join("\n"));
       return true;
@@ -173,6 +184,39 @@ function handleCommand(
       return true;
     }
 
+    case "/exchanges": {
+      const wallets = exchangeDb.listWallets();
+      const transfers = exchangeDb.recentTransfers(10);
+
+      const byExchange = new Map<string, typeof wallets>();
+      for (const w of wallets) {
+        const group = byExchange.get(w.exchangeName) ?? [];
+        group.push(w);
+        byExchange.set(w.exchangeName, group);
+      }
+
+      const walletLines: string[] = wallets.length === 0
+        ? ["  No exchange wallets tracked."]
+        : [];
+      for (const [exchange, group] of [...byExchange.entries()].sort()) {
+        walletLines.push(`  ${exchange}:`);
+        for (const w of group) {
+          const icon = w.walletType === "hot" ? "🔥" : "🧊";
+          const status = w.paused ? " [PAUSED]" : "";
+          walletLines.push(`    ${icon} ${w.walletType}${status}: ${w.address.slice(0, 12)}...`);
+        }
+      }
+
+      const transferLines = transfers.length === 0
+        ? ["  No large transfers detected yet (threshold: ≥1000 SOL)."]
+        : transfers.map((t) => {
+          const icon = t.transferType === "cold_to_hot" ? "🔴" : t.transferType === "hot_to_cold" ? "🟢" : "🔄";
+          return `  ${icon} ${t.exchangeName}: ${t.solAmount.toFixed(0)} SOL (${t.transferType.replace(/_/g, "→")})`;
+        });
+      printSystem(`🏦 Exchange Wallets (${wallets.length}):\n${walletLines.join("\n")}\n\nRecent Transfers (${transfers.length}):\n${transferLines.join("\n")}`);
+      return true;
+    }
+
     default:
       return false;
   }
@@ -185,13 +229,16 @@ export interface PlainUiOptions {
   cache: TokenCache;
   whaleDb: WhaleDb;
   whaleTracker: WhaleTracker | null;
+  exchangeDb: ExchangeDb;
+  exchangeTracker: ExchangeTracker | null;
+  analyzeExchangeTransfer: (event: ExchangeTransferEvent) => Promise<string>;
   serverCount: number;
   verbose: boolean;
   onQuit: () => Promise<void>;
 }
 
 export async function runPlainUi(opts: PlainUiOptions): Promise<void> {
-  const { config, router, cache, whaleDb, whaleTracker, serverCount, onQuit } = opts;
+  const { config, router, cache, whaleDb, whaleTracker, exchangeDb, exchangeTracker, analyzeExchangeTransfer, serverCount, onQuit } = opts;
 
   const shortWallet = config.walletAddress.length > 12
     ? `${config.walletAddress.slice(0, 4)}...${config.walletAddress.slice(-4)}`
@@ -217,6 +264,21 @@ export async function runPlainUi(opts: PlainUiOptions): Promise<void> {
 
     whaleTracker.on("wallet-paused", ({ label, address }: { label: string; address: string }) => {
       printSystem(`⏸️ Wallet "${label}" (${address}) has been paused. Use /resume <addr> to re-enable.`);
+    });
+  }
+
+  // Subscribe to exchange transfer events
+  if (exchangeTracker) {
+    exchangeTracker.on("transfer", (event: ExchangeTransferEvent) => {
+      printExchangeAlert(event);
+      analyzeExchangeTransfer(event)
+        .then((analysis) => {
+          console.log(`\n${GREEN}${BOLD}🤖 Exchange Analysis (${event.transfer.exchangeName})${RESET}`);
+          console.log(`  ${analysis.replace(/\n/g, "\n  ")}\n`);
+        })
+        .catch((err) => {
+          printSystem(`⚠️ Exchange analysis failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
     });
   }
 
@@ -267,7 +329,7 @@ export async function runPlainUi(opts: PlainUiOptions): Promise<void> {
         continue;
       }
 
-      const handled = handleCommand(cmd, argStr, cache, whaleDb, whaleTracker);
+      const handled = handleCommand(cmd, argStr, cache, whaleDb, whaleTracker, exchangeDb);
       if (handled) continue;
 
       printSystem(`Unknown command: ${cmd}. Try /help`);

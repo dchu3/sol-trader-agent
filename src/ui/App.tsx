@@ -11,6 +11,8 @@ import { extractTokenAddress } from "../token-cache.js";
 import type { WhaleDb } from "../whale-db.js";
 import type { WhaleTracker, WhaleSwapEvent } from "../whale-tracker.js";
 import type { WhaleAlert } from "../whale-db.js";
+import type { ExchangeDb, ExchangeTransfer } from "../exchange-db.js";
+import type { ExchangeTracker, ExchangeTransferEvent } from "../exchange-tracker.js";
 
 import { Header } from "./Header.js";
 import { MessageLog } from "./MessageLog.js";
@@ -20,6 +22,7 @@ import type { CommandDef } from "./InputPrompt.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import { Spinner } from "./Spinner.js";
 import { AlertPanel } from "./AlertPanel.js";
+import { ExchangeAlertPanel } from "./ExchangeAlertPanel.js";
 
 export interface AppProps {
   config: Config;
@@ -27,6 +30,9 @@ export interface AppProps {
   cache: TokenCache;
   whaleDb: WhaleDb;
   whaleTracker: WhaleTracker | null;
+  exchangeDb: ExchangeDb;
+  exchangeTracker: ExchangeTracker | null;
+  analyzeExchangeTransfer: (event: ExchangeTransferEvent) => Promise<string>;
   serverCount: number;
   verbose: boolean;
   onQuit: () => Promise<void>;
@@ -42,6 +48,7 @@ const SLASH_COMMANDS: CommandDef[] = [
   { name: "/purge", description: "Remove wallet + all data" },
   { name: "/pause", description: "Pause wallet tracking" },
   { name: "/resume", description: "Resume wallet tracking" },
+  { name: "/exchanges", description: "List exchange wallets & transfers" },
   { name: "/configure", description: "View/update settings" },
   { name: "/quit", description: "Exit the agent" },
 ];
@@ -52,6 +59,9 @@ export function App({
   cache,
   whaleDb,
   whaleTracker,
+  exchangeDb,
+  exchangeTracker,
+  analyzeExchangeTransfer,
   serverCount,
   verbose,
   onQuit,
@@ -68,6 +78,9 @@ export function App({
   } | null>(null);
   const [whaleAlerts, setWhaleAlerts] = useState<WhaleAlert[]>(() =>
     whaleDb.recentAlerts(10),
+  );
+  const [exchangeTransfers, setExchangeTransfers] = useState<ExchangeTransfer[]>(() =>
+    exchangeDb.recentTransfers(8),
   );
 
   const historyRef = useRef<Content[]>([]);
@@ -172,6 +185,65 @@ export function App({
     };
   }, [whaleTracker]);
 
+  // Subscribe to exchange transfer events
+  useEffect(() => {
+    if (!exchangeTracker) return;
+
+    const handler = (event: ExchangeTransferEvent) => {
+      const t = event.transfer;
+      const typeIcon =
+        t.transferType === "cold_to_hot"
+          ? "🔴"
+          : t.transferType === "hot_to_cold"
+          ? "🟢"
+          : "🔄";
+      const typeLabel = t.transferType.replace(/_/g, " ").toUpperCase();
+
+      // Add to the exchange alert panel
+      setExchangeTransfers((prev) =>
+        [{ ...t, alertedAt: Date.now() }, ...prev].slice(0, 50),
+      );
+
+      // Show immediate alert in message log
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "system" as const,
+          text: `🏦 ${typeIcon} Exchange Alert: ${t.exchangeName} — ${typeLabel} — ${t.solAmount.toFixed(0)} SOL\nRunning Gemini analysis...`,
+          timestamp: Date.now(),
+        },
+      ]);
+
+      // Run proactive Gemini analysis and push result to message log
+      analyzeExchangeTransfer(event)
+        .then((analysis) => {
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "agent" as const,
+              text: `🤖 Exchange Analysis (${t.exchangeName} ${typeLabel}):\n\n${analysis}`,
+              timestamp: Date.now(),
+            },
+          ]);
+        })
+        .catch((err) => {
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "system" as const,
+              text: `⚠️ Exchange analysis failed: ${err instanceof Error ? err.message : String(err)}`,
+              timestamp: Date.now(),
+            },
+          ]);
+        });
+    };
+
+    exchangeTracker.on("transfer", handler);
+    return () => {
+      exchangeTracker.off("transfer", handler);
+    };
+  }, [exchangeTracker, analyzeExchangeTransfer]);
+
   const addMessage = useCallback((role: Message["role"], text: string) => {
     setMessages((prev) => [...prev, { role, text, timestamp: Date.now() }]);
   }, []);
@@ -198,6 +270,7 @@ export function App({
             "  /purge <addr>  Remove wallet, alerts, and tracking cursor",
             "  /pause <addr>  Pause tracking for a wallet",
             "  /resume <addr>  Resume tracking for a wallet",
+            "  /exchanges  List exchange wallets & recent transfers",
             "  /configure  View/update settings",
             "  /quit       Exit",
             "",
@@ -338,11 +411,45 @@ export function App({
           addMessage("system", "Runtime configuration is not yet supported in the ink UI. Edit your .env file and restart the agent to change settings.");
           return true;
 
+        case "/exchanges": {
+          const wallets = exchangeDb.listWallets();
+          const transfers = exchangeDb.recentTransfers(10);
+
+          const byExchange = new Map<string, typeof wallets>();
+          for (const w of wallets) {
+            const group = byExchange.get(w.exchangeName) ?? [];
+            group.push(w);
+            byExchange.set(w.exchangeName, group);
+          }
+
+          const walletLines: string[] = wallets.length === 0
+            ? ["  No exchange wallets tracked."]
+            : [];
+          for (const [exchange, group] of [...byExchange.entries()].sort()) {
+            walletLines.push(`  ${exchange}:`);
+            for (const w of group) {
+              const icon = w.walletType === "hot" ? "🔥" : "🧊";
+              const status = w.paused ? " [PAUSED]" : "";
+              walletLines.push(`    ${icon} ${w.walletType}${status}: ${w.address.slice(0, 12)}...`);
+            }
+          }
+
+          const transferLines = transfers.length === 0
+            ? ["  No large transfers detected yet (threshold: ≥1000 SOL)."]
+            : transfers.map((t) => {
+              const icon = t.transferType === "cold_to_hot" ? "🔴" : t.transferType === "hot_to_cold" ? "🟢" : "🔄";
+              return `  ${icon} ${t.exchangeName}: ${t.solAmount.toFixed(0)} SOL (${t.transferType.replace(/_/g, "→")})`;
+            });
+
+          addMessage("system", `🏦 Exchange Wallets (${wallets.length}):\n${walletLines.join("\n")}\n\nRecent Transfers (${transfers.length}):\n${transferLines.join("\n")}`);
+          return true;
+        }
+
         default:
           return false;
       }
     },
-    [addMessage, cache, whaleDb, onQuit, exit],
+    [addMessage, cache, whaleDb, exchangeDb, onQuit, exit],
   );
 
   const handleSubmit = useCallback(
@@ -438,6 +545,12 @@ export function App({
         {whaleAlerts.length > 0 && (
           <Box width={50} flexShrink={0}>
             <AlertPanel alerts={whaleAlerts} />
+          </Box>
+        )}
+
+        {exchangeTransfers.length > 0 && (
+          <Box width={50} flexShrink={0}>
+            <ExchangeAlertPanel transfers={exchangeTransfers} />
           </Box>
         )}
       </Box>

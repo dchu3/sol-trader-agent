@@ -203,6 +203,20 @@ const SYSTEM_INSTRUCTION = (walletAddress: string, toolNames: string[], channel:
   if (toolSet.has("get_whale_alerts"))
     capabilities.push("- Get recent whale alerts — DEX swaps from watched wallets (get_whale_alerts)");
 
+  // exchange hot wallet tracking tools
+  if (toolSet.has("add_exchange_wallet"))
+    capabilities.push(
+      "- Add a known exchange wallet (hot or cold) to the exchange tracker (add_exchange_wallet)",
+    );
+  if (toolSet.has("remove_exchange_wallet"))
+    capabilities.push("- Remove an exchange wallet from the exchange tracker (remove_exchange_wallet)");
+  if (toolSet.has("list_exchange_wallets"))
+    capabilities.push("- List all tracked exchange hot/cold wallets (list_exchange_wallets)");
+  if (toolSet.has("get_exchange_transfers"))
+    capabilities.push(
+      "- Get recent large SOL transfers (≥1000 SOL) between exchange wallets — cold→hot movements signal potential sell-offs (get_exchange_transfers)",
+    );
+
   // Fallback for unknown tools
   const knownTools = new Set([
     "get_usdc_balance",
@@ -255,6 +269,11 @@ const SYSTEM_INSTRUCTION = (walletAddress: string, toolNames: string[], channel:
     "unwatch_wallet",
     "list_watched_wallets",
     "get_whale_alerts",
+    // exchange hot wallet tracking tools
+    "add_exchange_wallet",
+    "remove_exchange_wallet",
+    "list_exchange_wallets",
+    "get_exchange_transfers",
   ]);
   const unknownTools = toolNames.filter((t) => !knownTools.has(t));
   if (unknownTools.length > 0) {
@@ -327,7 +346,14 @@ WHALE TRACKING: When analysing a token, after checking top holders via getTokenL
 2. Suggest the user watch interesting whale wallets using watch_wallet with a descriptive label (e.g. "Top Holder #1 — 5.2% supply").
 3. When the user asks to follow, track, or copy-trade a wallet, use watch_wallet to add it.
 4. The whale tracker runs in the background and will alert the user when watched wallets make DEX swaps.
-5. Use get_whale_alerts to show recent whale activity when asked.${channel === "telegram" ? TELEGRAM_FORMAT_ADDENDUM : ""}`;
+5. Use get_whale_alerts to show recent whale activity when asked.
+
+EXCHANGE HOT WALLET TRACKER: A background service monitors known exchange wallets (Binance, Coinbase, Kraken, OKX, Bybit, etc.) for large SOL transfers (≥1000 SOL) between cold and hot wallets:
+1. Cold→Hot transfers (🔴) signal an exchange is staging funds for anticipated withdrawals or selling activity — a bearish signal for SOL price.
+2. Hot→Cold transfers (🟢) signal an exchange is moving funds into secure storage — often a neutral-to-bullish sign as it reduces immediate sell pressure.
+3. Use get_exchange_transfers to review recent detected movements and their implications.
+4. Use add_exchange_wallet to track additional exchange wallets discovered via on-chain analysis.
+5. When the user asks about exchange flows, SOL selling pressure, or institutional movements, always check get_exchange_transfers first.${channel === "telegram" ? TELEGRAM_FORMAT_ADDENDUM : ""}`;
 };
 
 /**
@@ -381,6 +407,12 @@ const READ_ONLY_TOOLS = new Set([
   "unwatch_wallet",
   "list_watched_wallets",
   "get_whale_alerts",
+  // exchange hot wallet tracking tools (read-only: add/remove modify the local DB, not the blockchain)
+  "add_exchange_wallet",
+  "remove_exchange_wallet",
+  "list_exchange_wallets",
+  "get_exchange_transfers",
+  "resume_exchange_wallet",
 ]);
 
 /**

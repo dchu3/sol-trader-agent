@@ -6,7 +6,7 @@ import { createRemoteMcpClient } from "./mcp-client.js";
 import type { McpClient } from "./mcp-client.js";
 import { createLocalMcpClient } from "./local-mcp-client.js";
 import type { LocalMcpClient } from "./local-mcp-client.js";
-import { createToolRouter } from "./agent.js";
+import { createToolRouter, runAgent } from "./agent.js";
 import type { ToolRouter } from "./agent.js";
 import { setVerbose } from "./logger.js";
 import { startTelegramBot } from "./telegram.js";
@@ -14,6 +14,11 @@ import { TokenCache } from "./token-cache.js";
 import { WhaleDb } from "./whale-db.js";
 import { WhaleTracker } from "./whale-tracker.js";
 import { createWhaleTools } from "./agent-whale-tools.js";
+import { ExchangeDb } from "./exchange-db.js";
+import { ExchangeTracker } from "./exchange-tracker.js";
+import type { ExchangeTransferEvent } from "./exchange-tracker.js";
+import { createExchangeTools } from "./agent-exchange-tools.js";
+import { seedExchangeWallets } from "./exchange-seeder.js";
 import { App } from "./ui/App.js";
 import { runPlainUi } from "./plain-ui.js";
 
@@ -28,6 +33,13 @@ async function main(): Promise<void> {
 
   const cache = new TokenCache();
   const whaleDb = new WhaleDb();
+  const exchangeDb = new ExchangeDb();
+
+  // Seed known exchange wallets on first run
+  const seeded = seedExchangeWallets(exchangeDb);
+  if (seeded > 0) {
+    console.log(`Exchange tracker: seeded ${seeded} known exchange wallets.`);
+  }
 
   console.log("Connecting to remote MCP server...");
   const mcpClient: McpClient = await createRemoteMcpClient(
@@ -129,16 +141,24 @@ async function main(): Promise<void> {
 
   // Register whale pseudo-tools into the router
   const whaleTools = createWhaleTools(whaleDb);
+  const exchangeTools = createExchangeTools(
+    exchangeDb,
+    (address) => exchangeTracker?.resetAlertCount(address),
+  );
   const allToolNames = new Set(router.tools.map((t) => t.name));
+  const whaleToolNames = new Set(whaleTools.tools.map((t) => t.name));
+  const exchangeToolNames = new Set(exchangeTools.tools.map((t) => t.name));
+
   const whaleToolRouter: ToolRouter = {
-    tools: [...router.tools, ...whaleTools.tools],
+    tools: [...router.tools, ...whaleTools.tools, ...exchangeTools.tools],
 
     async callTool(name, args, options) {
       if (!allToolNames.has(name)) {
-        // Check if it's a whale tool
-        const whaleToolNames = new Set(whaleTools.tools.map((t) => t.name));
         if (whaleToolNames.has(name)) {
           return whaleTools.callTool(name, args);
+        }
+        if (exchangeToolNames.has(name)) {
+          return exchangeTools.callTool(name, args);
         }
       }
       return router.callTool(name, args, options);
@@ -165,11 +185,75 @@ async function main(): Promise<void> {
     console.log("Whale tracker started.");
   }
 
+  // ── Start exchange tracker ─────────────────────────────────────────
+  let exchangeTracker: ExchangeTracker | null = null;
+  if (toolNameSet.has("getSignaturesForAddress")) {
+    exchangeTracker = new ExchangeTracker(exchangeDb, {
+      callTool: (name, args) => whaleToolRouter.callTool(name, args, { allowPayment: false }),
+      hasTool: (name) => toolNameSet.has(name),
+    });
+    exchangeTracker.start();
+    console.log("Exchange tracker started.");
+  }
+
+  /**
+   * Proactive Gemini analysis callback — fired when a large exchange transfer is detected.
+   * Runs a fresh agent call (no shared user history) and returns the analysis text.
+   */
+  async function analyzeExchangeTransfer(event: ExchangeTransferEvent): Promise<string> {
+    const t = event.transfer;
+    const recentHistory = exchangeDb.recentTransfersByExchange(t.exchangeName, 5);
+    const historyLines = recentHistory
+      .filter((r) => r.signature !== t.signature)
+      .map((r) => {
+        const ts = new Date(r.timestamp).toLocaleString();
+        return `- ${r.transferType} ${r.solAmount.toFixed(0)} SOL at ${ts}`;
+      });
+
+    const prompt =
+      `EXCHANGE HOT WALLET ALERT: ${t.exchangeName} has moved ${t.solAmount.toFixed(0)} SOL ` +
+      `(${t.transferType.replace(/_/g, " ")}) from wallet ${t.fromAddress} to ${t.toAddress}.\n\n` +
+      (historyLines.length > 0
+        ? `Recent ${t.exchangeName} transfer history:\n${historyLines.join("\n")}\n\n`
+        : "") +
+      `Based on this on-chain data, analyse the market implications for SOL. ` +
+      `Consider: (1) Is this a sign that ${t.exchangeName} is preparing for anticipated selling pressure? ` +
+      `(2) What does this pattern suggest about near-term exchange flows? ` +
+      `(3) What should a SOL trader watch out for? ` +
+      `Keep the analysis concise (3-5 bullet points).`;
+
+    try {
+      const analysis = await runAgent(
+        config.geminiApiKey,
+        config.geminiModel,
+        whaleToolRouter,
+        prompt,
+        [], // fresh history per analysis — no contamination of user conversations
+        config.walletAddress,
+        async () => false, // never approve — background analysis must not execute trades
+        "cli",
+        cache,
+      );
+      return analysis;
+    } catch (err) {
+      return `Analysis unavailable: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+
   // ── Start Telegram bot (optional) ──────────────────────────────────
   let stopTelegramBot: (() => void) | undefined;
   if (config.telegramBotToken) {
     try {
-      stopTelegramBot = await startTelegramBot(config, whaleToolRouter, cache, whaleDb, whaleTracker);
+      stopTelegramBot = await startTelegramBot(
+        config,
+        whaleToolRouter,
+        cache,
+        whaleDb,
+        whaleTracker,
+        exchangeDb,
+        exchangeTracker,
+        analyzeExchangeTransfer,
+      );
     } catch (err) {
       console.error(
         "Warning: failed to start Telegram bot:",
@@ -185,6 +269,7 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     if (whaleTracker) await whaleTracker.drain();
+    if (exchangeTracker) await exchangeTracker.drain();
     if (stopTelegramBot) stopTelegramBot();
     if (rpcClient) await rpcClient.close().catch(() => {});
     if (rugcheckClient) await rugcheckClient.close().catch(() => {});
@@ -193,6 +278,7 @@ async function main(): Promise<void> {
     await mcpClient.close();
     cache.close();
     whaleDb.close();
+    exchangeDb.close();
   };
 
   const handleSignal = () => {
@@ -216,14 +302,15 @@ async function main(): Promise<void> {
   // ── Render ink UI, plain UI, or run headless ────────────────────────
   if (headless) {
     console.log("Running in headless mode (no TTY detected or --headless flag set).");
-    if (!stopTelegramBot && !whaleTracker) {
-      console.warn("⚠️  No Telegram bot or whale tracker active — headless mode has nothing to do.");
+    if (!stopTelegramBot && !whaleTracker && !exchangeTracker) {
+      console.warn("⚠️  No Telegram bot, whale tracker, or exchange tracker active — headless mode has nothing to do.");
       console.warn("   Set TELEGRAM_BOT_TOKEN in .env or use an interactive terminal.");
       await shutdown();
       process.exit(1);
     }
     if (stopTelegramBot) console.log("Telegram bot is active. Send messages via Telegram.");
     if (whaleTracker) console.log("Whale tracker is active. Alerts will be forwarded to Telegram.");
+    if (exchangeTracker) console.log("Exchange tracker is active. Transfer alerts will be forwarded to Telegram.");
     console.log("Press Ctrl+C to stop.");
     // Block until a signal terminates the process
     await new Promise<void>(() => {});
@@ -236,6 +323,9 @@ async function main(): Promise<void> {
       cache,
       whaleDb,
       whaleTracker,
+      exchangeDb,
+      exchangeTracker,
+      analyzeExchangeTransfer,
       serverCount,
       verbose,
       onQuit: shutdown,
@@ -250,6 +340,9 @@ async function main(): Promise<void> {
       cache,
       whaleDb,
       whaleTracker,
+      exchangeDb,
+      exchangeTracker,
+      analyzeExchangeTransfer,
       serverCount,
       verbose,
       onQuit: shutdown,
