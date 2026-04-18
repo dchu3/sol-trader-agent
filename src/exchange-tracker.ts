@@ -180,21 +180,32 @@ export class ExchangeTracker extends EventEmitter {
     }
 
     const cursor = this.db.getCursor(address);
-    const limit = 20;
-    const args: Record<string, unknown> = { address, limit };
-    if (cursor) {
-      args.until = cursor;
-    }
+    const PAGE_SIZE = 100;
 
-    const resultText = await this.config.callTool("getSignaturesForAddress", args);
+    // Paginate until we've fetched all signatures newer than the cursor.
+    const signatures: Array<{ signature: string; blockTime?: number }> = [];
+    let pageAnchor: string | undefined;
 
-    let signatures: Array<{ signature: string; blockTime?: number }>;
-    try {
-      const parsed = JSON.parse(resultText);
-      signatures = Array.isArray(parsed) ? parsed : [];
-    } catch {
-      const sigMatches = resultText.match(/[A-Za-z0-9]{87,88}/g);
-      signatures = (sigMatches ?? []).map((s) => ({ signature: s }));
+    while (true) {
+      const args: Record<string, unknown> = { address, limit: PAGE_SIZE };
+      if (pageAnchor) args.before = pageAnchor;
+      if (cursor) args.until = cursor;
+
+      const resultText = await this.config.callTool("getSignaturesForAddress", args);
+
+      let page: Array<{ signature: string; blockTime?: number }>;
+      try {
+        const parsed = JSON.parse(resultText);
+        page = Array.isArray(parsed) ? parsed : [];
+      } catch {
+        const sigMatches = resultText.match(/[A-Za-z0-9]{87,88}/g);
+        page = (sigMatches ?? []).map((s) => ({ signature: s }));
+      }
+
+      if (page.length === 0) break;
+      signatures.push(...page);
+      if (page.length < PAGE_SIZE) break; // last page
+      pageAnchor = page[page.length - 1].signature;
     }
 
     if (signatures.length === 0) return;
@@ -214,6 +225,29 @@ export class ExchangeTracker extends EventEmitter {
     // Process each new signature
     for (const sig of signatures) {
       if (!this.running) break;
+
+      // Enforce rate limit inside the loop to prevent a large batch from
+      // emitting more than MAX_ALERTS_PER_WINDOW alerts in one sweep.
+      const currentEntry = this.alertCounts.get(address);
+      if (
+        currentEntry &&
+        Date.now() - currentEntry.windowStart < RATE_LIMIT_WINDOW_MS &&
+        currentEntry.count >= MAX_ALERTS_PER_WINDOW
+      ) {
+        this.emit("rate-limited", {
+          address,
+          label,
+          count: currentEntry.count,
+        } satisfies ExchangeRateLimitEvent);
+        this.db.pauseWallet(address);
+        this.emit("wallet-paused", {
+          address,
+          label,
+          reason: "rate-limited",
+        } satisfies ExchangeWalletPausedEvent);
+        break;
+      }
+
       if (this.db.hasTransfer(sig.signature)) continue;
 
       try {

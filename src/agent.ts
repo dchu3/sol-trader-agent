@@ -412,6 +412,7 @@ const READ_ONLY_TOOLS = new Set([
   "remove_exchange_wallet",
   "list_exchange_wallets",
   "get_exchange_transfers",
+  "resume_exchange_wallet",
 ]);
 
 /**

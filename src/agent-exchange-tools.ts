@@ -8,7 +8,10 @@ export interface ExchangeTools {
   callTool(name: string, args: Record<string, unknown>): Promise<string>;
 }
 
-export function createExchangeTools(db: ExchangeDb): ExchangeTools {
+export function createExchangeTools(
+  db: ExchangeDb,
+  resetAlertCount?: (address: string) => void,
+): ExchangeTools {
   const tools: Tool[] = [
     {
       name: "add_exchange_wallet",
@@ -71,9 +74,24 @@ export function createExchangeTools(db: ExchangeDb): ExchangeTools {
       },
     },
     {
-      name: "get_exchange_transfers",
+      name: "resume_exchange_wallet",
       description:
-        "Get recent large SOL transfers detected between exchange wallets. " +
+        "Resume tracking an exchange wallet that was automatically paused due to rate limiting. " +
+        "Clears the alert rate-limit counter so the wallet is polled again on the next cycle.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          address: {
+            type: "string",
+            description: "The Solana wallet public address to resume tracking.",
+          },
+        },
+        required: ["address"],
+      },
+    },
+    {
+      name: "get_exchange_transfers",
+      description: +
         "Focus on cold_to_hot transfers as these signal exchanges moving funds " +
         "into hot wallets in preparation for anticipated selling activity. " +
         "Optionally filter by exchange name.",
@@ -165,6 +183,19 @@ export function createExchangeTools(db: ExchangeDb): ExchangeTools {
             }
           }
           return lines.join("\n");
+        }
+
+        case "resume_exchange_wallet": {
+          const address = args.address as string;
+          if (!address) {
+            return "Error: address is required.";
+          }
+          const resumed = db.resumeWallet(address);
+          if (resumed) {
+            resetAlertCount?.(address);
+            return `✅ Resumed tracking exchange wallet ${address}. Rate-limit counter has been reset.`;
+          }
+          return `Wallet ${address} was not found or is not paused.`;
         }
 
         case "get_exchange_transfers": {

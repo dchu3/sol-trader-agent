@@ -141,7 +141,10 @@ async function main(): Promise<void> {
 
   // Register whale pseudo-tools into the router
   const whaleTools = createWhaleTools(whaleDb);
-  const exchangeTools = createExchangeTools(exchangeDb);
+  const exchangeTools = createExchangeTools(
+    exchangeDb,
+    (address) => exchangeTracker?.resetAlertCount(address),
+  );
   const allToolNames = new Set(router.tools.map((t) => t.name));
   const whaleToolNames = new Set(whaleTools.tools.map((t) => t.name));
   const exchangeToolNames = new Set(exchangeTools.tools.map((t) => t.name));
@@ -227,7 +230,7 @@ async function main(): Promise<void> {
         prompt,
         [], // fresh history per analysis — no contamination of user conversations
         config.walletAddress,
-        async () => true, // auto-approve (no wallet actions in analysis)
+        async () => false, // never approve — background analysis must not execute trades
         "cli",
         cache,
       );

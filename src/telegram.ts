@@ -1,4 +1,4 @@
-import { Bot, InlineKeyboard, type Context } from "grammy";
+import { Bot, InlineKeyboard, type Api, type Context } from "grammy";
 import type { Content } from "@google/genai";
 import type { Config } from "./config.js";
 import type { ToolRouter, ConfirmFn, Channel } from "./agent.js";
@@ -325,6 +325,27 @@ export async function startTelegramBot(
     );
   });
 
+  bot.command("resume_exchange", async (ctx) => {
+    if (!exchangeDb) {
+      await ctx.reply("🏦 Exchange hot wallet tracking is not available.");
+      return;
+    }
+    const addr = ctx.match?.trim();
+    if (!addr) {
+      await ctx.reply("Usage: /resume_exchange <address>");
+      return;
+    }
+    const resumed = exchangeDb.resumeWallet(addr);
+    if (resumed && exchangeTracker) {
+      exchangeTracker.resetAlertCount(addr);
+    }
+    await ctx.reply(
+      resumed
+        ? `▶️ Resumed exchange wallet tracking for ${addr}. Rate-limit counter reset.`
+        : `Wallet ${addr} was not found or is not paused.`,
+    );
+  });
+
   // ── Callback queries (inline keyboard confirmations) ─────────────────
   bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery.data;
@@ -415,7 +436,7 @@ export async function startTelegramBot(
         cache,
       );
 
-      await sendLongMessage(ctx, chatId, answer);
+      await sendLongMessage(ctx.api, chatId, answer);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       debug(`Telegram agent error: ${errorMsg}`);
@@ -562,16 +583,16 @@ export async function startTelegramBot(
 
   /** Try to send with HTML; fall back to plain text only for parse errors. */
   async function sendHtmlWithFallback(
-    ctx: Context,
+    api: Api,
     chatId: number,
     html: string,
   ): Promise<void> {
     try {
-      await ctx.api.sendMessage(chatId, html, { parse_mode: "HTML" });
+      await api.sendMessage(chatId, html, { parse_mode: "HTML" });
     } catch (err) {
       if (isHtmlParseError(err)) {
         debug(`Telegram HTML parse error, falling back to plain text: ${err instanceof Error ? err.message : String(err)}`);
-        await ctx.api.sendMessage(chatId, toPlainText(html));
+        await api.sendMessage(chatId, toPlainText(html));
       } else {
         throw err;
       }
@@ -579,14 +600,14 @@ export async function startTelegramBot(
   }
 
   async function sendLongMessage(
-    ctx: Context,
+    api: Api,
     chatId: number,
     rawText: string,
   ): Promise<void> {
     const text = sanitizeHtml(rawText);
 
     if (text.length <= MAX_MESSAGE_LENGTH) {
-      await sendHtmlWithFallback(ctx, chatId, text);
+      await sendHtmlWithFallback(api, chatId, text);
       return;
     }
 
@@ -627,7 +648,7 @@ export async function startTelegramBot(
       const finalOpen = openTagStack(prefix + chunk);
       const finalSuffix = [...finalOpen].reverse().map((t) => `</${t.name}>`).join("");
 
-      await sendHtmlWithFallback(ctx, chatId, prefix + chunk + finalSuffix);
+      await sendHtmlWithFallback(api, chatId, prefix + chunk + finalSuffix);
 
       // The tags we just force-closed need reopening in the next chunk.
       carryOver = finalOpen;
@@ -647,6 +668,7 @@ export async function startTelegramBot(
     { command: "exchange_wallets", description: "List exchange wallets & recent transfers" },
     { command: "add_exchange", description: "Add an exchange wallet to track" },
     { command: "remove_exchange", description: "Remove an exchange wallet" },
+    { command: "resume_exchange", description: "Resume a paused exchange wallet" },
   ]);
 
   // ── Whale alert forwarding (throttled per wallet) ──────────────────
@@ -727,6 +749,7 @@ export async function startTelegramBot(
       }
 
       const t = event.transfer;
+      const safeExchangeName = escapeHtmlText(t.exchangeName);
       const typeIcon =
         t.transferType === "cold_to_hot"
           ? "🔴"
@@ -738,7 +761,7 @@ export async function startTelegramBot(
       // Send immediate raw alert
       const alertMsg =
         `🏦 <b>Exchange Transfer Alert</b>\n` +
-        `${typeIcon} <b>${t.exchangeName}</b> — ${typeLabel}\n` +
+        `${typeIcon} <b>${safeExchangeName}</b> — ${typeLabel}\n` +
         `Amount: <b>${t.solAmount.toFixed(0)} SOL</b>\n` +
         `From (${t.fromType}): <code>${t.fromAddress.slice(0, 12)}...</code>\n` +
         `To (${t.toType}): <code>${t.toAddress.slice(0, 12)}...</code>\n` +
@@ -753,9 +776,9 @@ export async function startTelegramBot(
         })
         .then((analysis) => {
           const analysisMsg =
-            `🤖 <b>Gemini Analysis — ${t.exchangeName} ${typeLabel}</b>\n\n` +
+            `🤖 <b>Gemini Analysis — ${safeExchangeName} ${typeLabel}</b>\n\n` +
             sanitizeHtml(analysis);
-          return bot.api.sendMessage(targetChatId, analysisMsg, { parse_mode: "HTML" });
+          return sendLongMessage(bot.api, targetChatId, analysisMsg);
         })
         .catch((err) => {
           debug(
