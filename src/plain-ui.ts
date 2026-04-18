@@ -232,13 +232,19 @@ function handleCommand(
         return true;
       }
       const [addr, walletTypeRaw, exchangeName, ...labelParts] = parts;
+      if (!addr || addr.length < 32) {
+        printSystem("Invalid wallet address.\nUsage: /add_exchange <address> <hot|cold> <exchange_name> [label]");
+        return true;
+      }
       if (walletTypeRaw !== "hot" && walletTypeRaw !== "cold") {
         printSystem("wallet_type must be 'hot' or 'cold'.\nUsage: /add_exchange <address> <hot|cold> <exchange_name> [label]");
         return true;
       }
       const label = labelParts.length > 0 ? labelParts.join(" ") : undefined;
-      exchangeDb.addWallet(addr, exchangeName, walletTypeRaw, label ?? "");
-      printSystem(`✅ Added ${exchangeName} ${walletTypeRaw} wallet: ${addr}`);
+      const added = exchangeDb.addWallet(addr, exchangeName, walletTypeRaw, label ?? "");
+      printSystem(added
+        ? `✅ Added ${exchangeName} ${walletTypeRaw} wallet: ${addr}`
+        : `Wallet ${addr} is already being tracked.`);
       return true;
     }
 

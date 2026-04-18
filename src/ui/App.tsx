@@ -463,13 +463,19 @@ export function App({
             return true;
           }
           const [addr, walletTypeRaw, exchangeName, ...labelParts] = parts;
+          if (!addr || addr.length < 32) {
+            addMessage("system", "Invalid wallet address.\nUsage: /add_exchange <address> <hot|cold> <exchange_name> [label]");
+            return true;
+          }
           if (walletTypeRaw !== "hot" && walletTypeRaw !== "cold") {
             addMessage("system", "wallet_type must be 'hot' or 'cold'.\nUsage: /add_exchange <address> <hot|cold> <exchange_name> [label]");
             return true;
           }
           const label = labelParts.length > 0 ? labelParts.join(" ") : undefined;
-          exchangeDb.addWallet(addr, exchangeName, walletTypeRaw, label ?? "");
-          addMessage("system", `✅ Added ${exchangeName} ${walletTypeRaw} wallet: ${addr}`);
+          const added = exchangeDb.addWallet(addr, exchangeName, walletTypeRaw, label ?? "");
+          addMessage("system", added
+            ? `✅ Added ${exchangeName} ${walletTypeRaw} wallet: ${addr}`
+            : `Wallet ${addr} is already being tracked.`);
           return true;
         }
 
