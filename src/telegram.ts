@@ -344,7 +344,7 @@ export async function startTelegramBot(
       return;
     }
     const addr = ctx.match?.trim();
-    if (!addr) {
+    if (!addr || addr.length < 32) {
       await ctx.reply("Usage: /pause_exchange <address>");
       return;
     }
@@ -362,7 +362,7 @@ export async function startTelegramBot(
       return;
     }
     const addr = ctx.match?.trim();
-    if (!addr) {
+    if (!addr || addr.length < 32) {
       await ctx.reply("Usage: /resume_exchange <address>");
       return;
     }
