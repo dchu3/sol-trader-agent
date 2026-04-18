@@ -65,6 +65,7 @@ function handleCommand(
   whaleDb: WhaleDb,
   whaleTracker: WhaleTracker | null,
   exchangeDb: ExchangeDb,
+  exchangeTracker: ExchangeTracker | null,
 ): boolean {
   switch (cmd) {
     case "/help":
@@ -78,9 +79,16 @@ function handleCommand(
         "  /unwatch <addr>  Stop watching a wallet",
         "  /whales     List watched wallets & alerts",
         "  /purge <addr>  Remove wallet, alerts, and tracking cursor",
-        "  /pause <addr>  Pause tracking for a wallet",
-        "  /resume <addr>  Resume tracking for a wallet",
+        "  /pause <addr>  Pause whale wallet tracking",
+        "  /resume <addr>  Resume whale wallet tracking",
+        "",
+        "Exchange Tracker:",
         "  /exchanges  List exchange wallets & recent transfers",
+        "  /add_exchange <addr> <hot|cold> <name> [label]  Add an exchange wallet",
+        "  /remove_exchange <addr>  Remove an exchange wallet",
+        "  /pause_exchange <addr>  Pause tracking for an exchange wallet",
+        "  /resume_exchange <addr>  Resume a paused exchange wallet",
+        "",
         "  /quit       Exit",
       ].join("\n"));
       return true;
@@ -217,6 +225,48 @@ function handleCommand(
       return true;
     }
 
+    case "/add_exchange": {
+      const parts = argStr.trim().split(/\s+/);
+      if (parts.length < 3) {
+        printSystem("Usage: /add_exchange <address> <hot|cold> <exchange_name> [label]");
+        return true;
+      }
+      const [addr, walletTypeRaw, exchangeName, ...labelParts] = parts;
+      if (walletTypeRaw !== "hot" && walletTypeRaw !== "cold") {
+        printSystem("wallet_type must be 'hot' or 'cold'.\nUsage: /add_exchange <address> <hot|cold> <exchange_name> [label]");
+        return true;
+      }
+      const label = labelParts.length > 0 ? labelParts.join(" ") : undefined;
+      exchangeDb.addWallet(addr, exchangeName, walletTypeRaw, label ?? "");
+      printSystem(`✅ Added ${exchangeName} ${walletTypeRaw} wallet: ${addr}`);
+      return true;
+    }
+
+    case "/remove_exchange": {
+      const addr = argStr.trim();
+      if (!addr) { printSystem("Usage: /remove_exchange <address>"); return true; }
+      const removed = exchangeDb.removeWallet(addr);
+      printSystem(removed ? `🗑️ Removed exchange wallet: ${addr}` : `Wallet not found: ${addr}`);
+      return true;
+    }
+
+    case "/pause_exchange": {
+      const addr = argStr.trim();
+      if (!addr) { printSystem("Usage: /pause_exchange <address>"); return true; }
+      const paused = exchangeDb.pauseWallet(addr);
+      printSystem(paused ? `⏸️ Paused exchange tracking for ${addr}` : `${addr} is not tracked or already paused.`);
+      return true;
+    }
+
+    case "/resume_exchange": {
+      const addr = argStr.trim();
+      if (!addr) { printSystem("Usage: /resume_exchange <address>"); return true; }
+      const resumed = exchangeDb.resumeWallet(addr);
+      if (resumed && exchangeTracker) exchangeTracker.resetAlertCount(addr);
+      printSystem(resumed ? `▶️ Resumed exchange tracking for ${addr}` : `${addr} is not tracked or not paused.`);
+      return true;
+    }
+
     default:
       return false;
   }
@@ -329,7 +379,7 @@ export async function runPlainUi(opts: PlainUiOptions): Promise<void> {
         continue;
       }
 
-      const handled = handleCommand(cmd, argStr, cache, whaleDb, whaleTracker, exchangeDb);
+      const handled = handleCommand(cmd, argStr, cache, whaleDb, whaleTracker, exchangeDb, exchangeTracker);
       if (handled) continue;
 
       printSystem(`Unknown command: ${cmd}. Try /help`);

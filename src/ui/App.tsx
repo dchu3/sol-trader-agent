@@ -46,9 +46,13 @@ const SLASH_COMMANDS: CommandDef[] = [
   { name: "/unwatch", description: "Stop watching a wallet" },
   { name: "/whales", description: "List wallets & alerts" },
   { name: "/purge", description: "Remove wallet + all data" },
-  { name: "/pause", description: "Pause wallet tracking" },
-  { name: "/resume", description: "Resume wallet tracking" },
+  { name: "/pause", description: "Pause whale wallet tracking" },
+  { name: "/resume", description: "Resume whale wallet tracking" },
   { name: "/exchanges", description: "List exchange wallets & transfers" },
+  { name: "/add_exchange", description: "Add an exchange wallet" },
+  { name: "/remove_exchange", description: "Remove an exchange wallet" },
+  { name: "/pause_exchange", description: "Pause an exchange wallet" },
+  { name: "/resume_exchange", description: "Resume a paused exchange wallet" },
   { name: "/configure", description: "View/update settings" },
   { name: "/quit", description: "Exit the agent" },
 ];
@@ -268,9 +272,16 @@ export function App({
             "  /unwatch <addr>  Stop watching a wallet",
             "  /whales     List watched wallets & alerts",
             "  /purge <addr>  Remove wallet, alerts, and tracking cursor",
-            "  /pause <addr>  Pause tracking for a wallet",
-            "  /resume <addr>  Resume tracking for a wallet",
+            "  /pause <addr>  Pause whale wallet tracking",
+            "  /resume <addr>  Resume whale wallet tracking",
+            "",
+            "Exchange Tracker:",
             "  /exchanges  List exchange wallets & recent transfers",
+            "  /add_exchange <addr> <hot|cold> <name> [label]  Add an exchange wallet",
+            "  /remove_exchange <addr>  Remove an exchange wallet",
+            "  /pause_exchange <addr>  Pause tracking for an exchange wallet",
+            "  /resume_exchange <addr>  Resume a paused exchange wallet",
+            "",
             "  /configure  View/update settings",
             "  /quit       Exit",
             "",
@@ -445,11 +456,53 @@ export function App({
           return true;
         }
 
+        case "/add_exchange": {
+          const parts = argStr.trim().split(/\s+/);
+          if (parts.length < 3) {
+            addMessage("system", "Usage: /add_exchange <address> <hot|cold> <exchange_name> [label]");
+            return true;
+          }
+          const [addr, walletTypeRaw, exchangeName, ...labelParts] = parts;
+          if (walletTypeRaw !== "hot" && walletTypeRaw !== "cold") {
+            addMessage("system", "wallet_type must be 'hot' or 'cold'.\nUsage: /add_exchange <address> <hot|cold> <exchange_name> [label]");
+            return true;
+          }
+          const label = labelParts.length > 0 ? labelParts.join(" ") : undefined;
+          exchangeDb.addWallet(addr, exchangeName, walletTypeRaw, label ?? "");
+          addMessage("system", `✅ Added ${exchangeName} ${walletTypeRaw} wallet: ${addr}`);
+          return true;
+        }
+
+        case "/remove_exchange": {
+          const addr = argStr.trim();
+          if (!addr) { addMessage("system", "Usage: /remove_exchange <address>"); return true; }
+          const removed = exchangeDb.removeWallet(addr);
+          addMessage("system", removed ? `🗑️ Removed exchange wallet: ${addr}` : `Wallet not found: ${addr}`);
+          return true;
+        }
+
+        case "/pause_exchange": {
+          const addr = argStr.trim();
+          if (!addr) { addMessage("system", "Usage: /pause_exchange <address>"); return true; }
+          const paused = exchangeDb.pauseWallet(addr);
+          addMessage("system", paused ? `⏸️ Paused exchange tracking for ${addr}` : `${addr} is not tracked or already paused.`);
+          return true;
+        }
+
+        case "/resume_exchange": {
+          const addr = argStr.trim();
+          if (!addr) { addMessage("system", "Usage: /resume_exchange <address>"); return true; }
+          const resumed = exchangeDb.resumeWallet(addr);
+          if (resumed && exchangeTracker) exchangeTracker.resetAlertCount(addr);
+          addMessage("system", resumed ? `▶️ Resumed exchange tracking for ${addr}` : `${addr} is not tracked or not paused.`);
+          return true;
+        }
+
         default:
           return false;
       }
     },
-    [addMessage, cache, whaleDb, exchangeDb, onQuit, exit],
+    [addMessage, cache, whaleDb, exchangeDb, exchangeTracker, onQuit, exit],
   );
 
   const handleSubmit = useCallback(
