@@ -89,9 +89,22 @@ export async function startTelegramBot(
         "• `Buy 0.1 SOL worth of <token-address>`\n" +
         "• `Get a quote for swapping 1 SOL to <token-address>`\n" +
         "• `What's my balance?`\n\n" +
-        "*Commands:*\n" +
+        "*General:*\n" +
         "/help — Show this message\n" +
         "/clear — Reset conversation history\n\n" +
+        "*Whale Tracker:*\n" +
+        "/watch `<address> [label]` — Watch a whale wallet\n" +
+        "/unwatch `<address>` — Stop watching a wallet\n" +
+        "/whales — List watched wallets and recent alerts\n" +
+        "/purge `<address>` — Remove wallet and all its alert data\n" +
+        "/pause `<address>` — Pause alerts for a wallet\n" +
+        "/resume `<address>` — Resume alerts for a wallet\n\n" +
+        "*Exchange Tracker:*\n" +
+        "/exchange\\_wallets — List exchange wallets and recent transfers\n" +
+        "/add\\_exchange `<address> <hot|cold> <name> [label]` — Add a wallet\n" +
+        "/remove\\_exchange `<address>` — Remove a wallet\n" +
+        "/pause\\_exchange `<address>` — Pause tracking a wallet\n" +
+        "/resume\\_exchange `<address>` — Resume tracking a wallet\n\n" +
         "Token analysis is paid via x402\\. Trading actions require confirmation\\.",
       { parse_mode: "MarkdownV2" },
     );
@@ -325,13 +338,31 @@ export async function startTelegramBot(
     );
   });
 
+  bot.command("pause_exchange", async (ctx) => {
+    if (!exchangeDb) {
+      await ctx.reply("🏦 Exchange hot wallet tracking is not available.");
+      return;
+    }
+    const addr = ctx.match?.trim();
+    if (!addr || addr.length < 32) {
+      await ctx.reply("Usage: /pause_exchange <address>");
+      return;
+    }
+    const paused = exchangeDb.pauseWallet(addr);
+    await ctx.reply(
+      paused
+        ? `⏸️ Paused exchange wallet tracking for ${addr}.`
+        : `Wallet ${addr} was not found or is already paused.`,
+    );
+  });
+
   bot.command("resume_exchange", async (ctx) => {
     if (!exchangeDb) {
       await ctx.reply("🏦 Exchange hot wallet tracking is not available.");
       return;
     }
     const addr = ctx.match?.trim();
-    if (!addr) {
+    if (!addr || addr.length < 32) {
       await ctx.reply("Usage: /resume_exchange <address>");
       return;
     }
@@ -668,6 +699,7 @@ export async function startTelegramBot(
     { command: "exchange_wallets", description: "List exchange wallets & recent transfers" },
     { command: "add_exchange", description: "Add an exchange wallet to track" },
     { command: "remove_exchange", description: "Remove an exchange wallet" },
+    { command: "pause_exchange", description: "Pause tracking an exchange wallet" },
     { command: "resume_exchange", description: "Resume a paused exchange wallet" },
   ]);
 
